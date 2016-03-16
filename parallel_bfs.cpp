@@ -1,26 +1,4 @@
-/*
- * main.cpp
- *
- *  Created on: Mar 6, 2016
- *      Author: thanasis
-1 2
-2 3
-3 1
-4 1
-2 4
-S
-Q 1 3
-A 4 5
-Q 1 5
-Q 5 1
-F
-A 5 3
-Q 1 3
-D 2 3
-Q 1 3
-F
 
- */
 
 
 #include <stdio.h>
