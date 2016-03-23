@@ -11,6 +11,7 @@
 #include <ext/hash_map>
 #include <unordered_map>
 #include <hash_map>
+#include <iostream>
 #include <unistd.h>
 #include <algorithm>
 #include <map>
@@ -50,8 +51,8 @@ struct Graph_info{
 };
 
 struct MyPair{
-	char op;
 	Node b;
+	size_t version;
 };
 
 
@@ -62,51 +63,119 @@ Node *nameReorder;
 unsigned int nameChangeCounter = 1;
 
 size_t versionStart=0,versionCounter=0;
-map<Node,map<size_t,MyPair>> multiversion[2];
+vector<MyPair> *Forward_add,*Forward_del,*Backward_add,*Backward_del;
+//std::vector<Node> deletions[2],additions[2];
 
-vector<Node> construct_the_right_children(int graph,Node a,size_t version){
-	std::vector<Node> children;
-	map<size_t,MyPair> version_of_operations;
-	map<Node,map<size_t,MyPair>>::iterator itAD;
+void construct_the_right_children(int graph,Node a,size_t version,vector<Node>& children){
+	vector<MyPair>::iterator itA,itD;
+	bool flag;
 
 	if(graph==FORWARD){
 		children=ForwardGraph[a];
-	}
-	else{
-		children=BackwardGraph[a];
-	}
+		itA=Forward_add[a].begin();
+		itD=Forward_del[a].begin();
 
-	itAD=multiversion[graph].find(a);
-
-	if(itAD!=multiversion[graph].end()){
-		version_of_operations=itAD->second;
-
-		map<size_t,MyPair>::iterator it_add_del;
-
-		it_add_del=version_of_operations.begin();
-
-		while(it_add_del!=version_of_operations.end()){
-			if(it_add_del->first<version){
-				if(it_add_del->second.op=='A'){
-					children.push_back(it_add_del->second.b);
+		while(itA!=Forward_add[a].end() && itD!=Forward_del[a].end()){
+			if(itA->version<version && itD->version<version){
+				if(itA->version<itD->version){
+					children.push_back(itA->b);
+					itA++;
 				}
 				else{
-					std::vector<Node>::iterator temp;
-					temp=find(children.begin(),children.end(),it_add_del->second.b);
-					if(temp!=children.end()){
-						children.erase(temp);
+					std::vector<Node>::iterator it;
+					it=find(children.begin(),children.end(),itD->b); // here we need a hash for deletions 
+					if(it!=children.end()){
+						children.erase(it);
 					}
+					itD++;
 				}
-				it_add_del++;
 			}
 			else{
 				break;
 			}
 		}
+
+		if(itA==Forward_add[a].end() && itD==Forward_del[a].end()){
+			return;
+		}
+		else{
+			while(itA!=Forward_add[a].end()){
+				if(itA->version<version){
+					children.push_back(itA->b);
+					itA++;
+				}
+				else{
+					break;
+				}
+			}
+			while(itD!=Forward_del[a].end()){
+				if(itD->version<version){
+					std::vector<Node>::iterator it;
+					it=find(children.begin(),children.end(),itD->b); // here we need a hash for deletions 
+					if(it!=children.end()){
+						children.erase(it);
+					}
+					itD++;
+				}
+				else{
+					return;
+				}
+			}
+		}
 	}
+	else{
+		children=BackwardGraph[a];
+		itA=Backward_add[a].begin();
+		itD=Backward_del[a].begin();
 
+		while(itA!=Backward_add[a].end() && itD!=Backward_del[a].end()){
+			if(itA->version<version && itD->version<version){
+				if(itA->version<itD->version){
+					children.push_back(itA->b);
+					itA++;
+				}
+				else{
+					std::vector<Node>::iterator it;
+					it=find(children.begin(),children.end(),itD->b); // here we need a hash for deletions 
+					if(it!=children.end()){
+						children.erase(it);
+					}
+					itD++;
+				}
+			}
+			else{
+				break;
+			}
+		}
 
-	return children;
+		if(itA==Backward_add[a].end() && itD==Backward_del[a].end()){
+			return ;
+		}
+		else{
+			while(itA!=Backward_add[a].end()){
+				if(itA->version<version){
+					children.push_back(itA->b);
+					itA++;
+				}
+				else{
+					break;
+				}
+			}
+			while(itD!=Backward_del[a].end()){
+				if(itD->version<version){
+					std::vector<Node>::iterator it;
+					it=find(children.begin(),children.end(),itD->b); // here we need a hash for deletions 
+					if(it!=children.end()){
+						children.erase(it);
+					}
+					itD++;
+				}
+				else{
+					return;
+				}
+			}
+		}
+	}
 
 }
 
@@ -116,8 +185,11 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 
 	visitedCounter += 2;
 
-	vector<Node> children_F=construct_the_right_children(FORWARD,a,localVersion);
-	std::vector<Node> children_B=construct_the_right_children(BACKWARD,b,localVersion);
+	vector<Node> children_F;
+	std::vector<Node> children_B;
+
+	construct_the_right_children(FORWARD,a,localVersion,children_F);
+	construct_the_right_children(BACKWARD,b,localVersion,children_B);
 
 
 	// Initialize Queues and Variables
@@ -155,7 +227,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 			fGraphDistance++;	// Going to the next distance
 			for(unsigned int i=0; i < fCurrentNodes; i++){
 				currentFather = fQueue[i+fQueuePointer*MAXN];
-				children_F=construct_the_right_children(FORWARD,currentFather,localVersion);
+				construct_the_right_children(FORWARD,currentFather,localVersion,children_F);
 				for(unsigned int j=0; j < children_F.size(); j++){
 					currentChild = children_F[j];
 
@@ -166,7 +238,8 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 					}
 					visited[currentChild] = visitedCounter;
 					dist[currentChild] = fGraphDistance;
-					std::vector<Node> tempChild_F=construct_the_right_children(FORWARD,currentChild,localVersion);
+					std::vector<Node> tempChild_F;
+					construct_the_right_children(FORWARD,currentChild,localVersion,tempChild_F);
 					fChildrenCount += tempChild_F.size();	// Counting the children of the next stage
 					fQueue[iterator+(fQueuePointer^1)*MAXN] = currentChild;
 					iterator++;
@@ -182,7 +255,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 			bGraphDistance++;	// Going to the next distance
 			for(unsigned int i=0; i < bCurrentNodes; i++){
 				currentFather = bQueue[i+bQueuePointer*MAXN];
-				children_B=construct_the_right_children(BACKWARD,currentFather,localVersion);
+				construct_the_right_children(BACKWARD,currentFather,localVersion,children_B);
 				for(unsigned int j=0; j < children_B.size(); j++){
 					currentChild = children_B[j];
 
@@ -193,7 +266,8 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 					}
 					visited[currentChild] = visitedCounter+1;
 					dist[currentChild] = bGraphDistance;
-					std::vector<Node> tempChild_B=construct_the_right_children(BACKWARD,currentChild,localVersion);
+					std::vector<Node> tempChild_B;
+					construct_the_right_children(BACKWARD,currentChild,localVersion,tempChild_B);
 					bChildrenCount += tempChild_B.size();	// Counting the children of the next stage
 					bQueue[iterator+(bQueuePointer^1)*MAXN] = currentChild;
 					iterator++;
@@ -296,28 +370,27 @@ void preprocess2(){
 }
 
 void multiversion_changing(int graph,int operation,Node a,Node b){
-	map<Node,map<size_t,MyPair>>::iterator it;
-	map<size_t,MyPair> newVersion;
 	MyPair pair;
 
-	if(operation){
-		pair.op='D';
+	pair.version=versionCounter;
+
+	if(graph==FORWARD){
+		pair.b=b;
+		if(operation==ADD){
+			Forward_add[a].push_back(pair);
+		}
+		else{
+			Forward_del[a].push_back(pair);
+		}
 	}
 	else{
-		pair.op='A';
-	}
-
-	pair.b=b;
-	it=multiversion[graph].find(a);
-
-	if(it!=multiversion[graph].end()){
-		newVersion=it->second;
-		newVersion[versionCounter]=pair;
-		multiversion[graph][a]=newVersion;
-	}
-	else{
-		newVersion[versionCounter]=pair;
-		multiversion[graph][a]=newVersion;
+		pair.b=b;
+		if(operation==ADD){
+			Backward_add[a].push_back(pair);
+		}
+		else{
+			Backward_del[a].push_back(pair);
+		}
 	}
 }
 
@@ -328,6 +401,7 @@ int main() {
 	vector<Operation_info> operations;
 	Operation_info info;
 
+	//cerr << "3ekinaei" << endl;
 	ForwardGraph = (vector<Node>*)calloc(MAXN, sizeof(vector<Node>));
 	BackwardGraph = (vector<Node>*)calloc(MAXN, sizeof(vector<Node>));
 	fQueue = (Node*)calloc(MAXN*2, sizeof(Node));
@@ -335,13 +409,28 @@ int main() {
 	visited = (Node*)calloc(MAXN, sizeof(Node));
 	dist = (Node*)calloc(MAXN, sizeof(Node));
 	nameChange = (Node*)calloc(((size_t)1<<28), sizeof(Node));
+	Forward_del = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
+	Forward_add = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
+	Backward_del = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
+	Backward_add = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
+
+	//cerr << "Teleiwse thn ana8esh" << endl;
+	//cout << "Ola kala" << endl;
+
+	// for(unsigned long long int  i=0; i<MAXN; i++){
+	// 	Forward_del[i].reserve(100);
+	// 	Forward_add[i].reserve(100);
+	// 	Backward_del[i].reserve(100);
+	// 	Forward_add[i].reserve(100);
+	// 	//cout << "Kala" << endl;
+	// }
 
 	while(scanf("%d %d",&a,&b) == 2){
 		if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 		if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 		add_edge(nameChange[a],nameChange[b]);
 	}
-
+	//cerr << "Teleiwse to diavasma" << endl;
 	preprocess();			// Sorting the biggest Nodes to the front of the lists
 	/*preprocess2();
 
@@ -355,19 +444,32 @@ int main() {
 
 	while(scanf(" %c",&c) == 1) {
 		if(c == 'F') {
+			//cerr << "Telos batch" << endl;
 			fflush(stdout);
 			
 				for(vector<Operation_info>::iterator it=operations.begin(); it!=operations.end(); it++){
 					if(it->op=='A'){
 						add_edge(it->a,it->b);
+						if(Forward_add[a].size()){
+							Forward_add[a].clear();
+						}
+						// here must be changed the flags of the struct ForwardGraph and BackwardGraph
+						if(Backward_add[b].size()){
+							Backward_add[b].clear();
+						}
 					}
 					else{
 						delete_edge(it->a,it->b);
+
+						if(Forward_del[a].size()){
+							Forward_del[a].clear();
+						}
+					
+						if(Backward_del[b].size()){
+							Backward_del[b].clear();
+						}
 					}
 				}
-				multiversion[FORWARD].clear();
-				multiversion[BACKWARD].clear();
-				operations.clear();
 
 				versionStart=versionCounter;
 			
@@ -379,6 +481,7 @@ int main() {
 
 
 		if(c == 'Q'){
+			//cerr << "Arxizei me query" << endl;
 			if(nameChange[a] == 0 || nameChange[b] == 0){
 				if(a != b)
 					printf("-1\n");
@@ -386,19 +489,28 @@ int main() {
 					printf("0\n");
 				continue;
 			}
+			//cerr << "Ola kala edw" << endl;
 			printf("%d\n",shortest_path(nameChange[a],nameChange[b],versionCounter));
+			//cerr << "epestrepse kala" << endl;
 		}else if(c == 'A'){
+			//cerr << "Arxizei me add" << endl;
 			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 			info.op='A'; info.a=nameChange[a]; info.b=nameChange[b];
 			operations.push_back(info);
+			//cerr << "Komple to add" << endl;
 
 			multiversion_changing(FORWARD,ADD,nameChange[a],nameChange[b]);
+		//	cerr << "Edw omws einai komple?" << endl;
 			multiversion_changing(BACKWARD,ADD,nameChange[b],nameChange[a]);
+		//	cerr << "Mallon edw exoume provlima" << endl;
+			//additions[FORWARD].push_back(nameChange[a]); additions[BACKWARD].push_back(nameChange[b]);
 			//add_edge(nameChange[a],nameChange[b]);
 			versionCounter++;
 
+
 		}else if(c == 'D') {
+		//	cerr << "Arxizei me delete" << endl;
 			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 			info.op='D'; info.a=nameChange[a]; info.b=nameChange[b];
@@ -406,6 +518,7 @@ int main() {
 
 			multiversion_changing(FORWARD,DELETE,nameChange[a],nameChange[b]);
 			multiversion_changing(BACKWARD,DELETE,nameChange[b],nameChange[a]);
+			//MyPairdeletions[FORWARD].push_back(nameChange[a]); deletions[BACKWARD].push_back(nameChange[b]);
 			versionCounter++;
 			//delete_edge(nameChange[a],nameChange[b]);
 		}
