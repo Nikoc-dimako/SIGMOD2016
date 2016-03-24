@@ -1,30 +1,50 @@
-/*
- * main.cpp
- *
- *  Created on: Mar 6, 2016
- *      Author: thanasis
- */
-
-#include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
-
+#include <iostream>
 #include <unistd.h>
-
 #include <algorithm>
 
 
 using namespace std;
+using namespace __gnu_cxx;
+
 
 #define MAXN ((size_t)1<<24)
+#define FORWARD 0
+#define BACKWARD 1
+#define ADD 0
+#define DELETE 1
+#define MAXTH 2
 typedef unsigned int Node;
+
 
 typedef struct GraphNode {
    bool addition;
    bool deletion;
    vector<Node> nodes;
+
+   GraphNode(){ addition=deletion=false; }
 } GraphNode;
+
+
+struct Operation_info{
+	char op;
+	Node a,b;
+};
+
+
+struct Child_info{
+	Node a;
+	vector<Node> children;
+};
+
+
+struct MyPair{
+	Node b;
+	size_t version;
+};
+
 
 // Variables for the Queues
 GraphNode *ForwardGraph, *BackwardGraph;
@@ -33,11 +53,19 @@ Node *fQueue;
 Node *bQueue;
 unsigned int visitedCounter = 0;
 
+
 //Variables for the node's nameChange
 Node *nameChange;
+Node *nameReorder;
 unsigned int nameChangeCounter = 1;
 
-int shortest_path(Node a, Node b) {
+
+// Variables for the multiversion
+size_t versionStart=0,versionCounter=0;
+vector<MyPair> *Forward_add,*Forward_del,*Backward_add,*Backward_del;
+
+
+int shortest_path(Node a, Node b,size_t localVersion) {
 	if(a == b)
 		return 0;
 
@@ -98,14 +126,23 @@ int shortest_path(Node a, Node b) {
 						fQueue[iterator+(fQueuePointer^1)*MAXN] = currentChild;
 						iterator++;
 					}
-				}else{
+				}else{		// Deletion == 1
 					// We have to check at every child if it was deleted
 					for(unsigned int j=0; j < ForwardGraph[currentFather].nodes.size(); j++){
 						currentChild = ForwardGraph[currentFather].nodes[j];
 
 						// Check if the node was deleted
 						// If it was continue to the next child;
-						// TODO
+
+						std::vector<MyPair>:: iterator it;
+						for(it=Forward_del[currentFather].begin(); it!=Forward_del[currentFather].end(); it++){
+							if(it->b==currentChild){
+								break;
+							}
+						}
+						if(it!=Forward_del[currentFather].end() && it->version<localVersion){
+							continue;
+						}
 
 						if(visited[currentChild] >= visitedCounter){	// Explored by the other side
 							if(visited[currentChild] == visitedCounter+1) 	// Found the minimum distance!
@@ -124,15 +161,57 @@ int shortest_path(Node a, Node b) {
 				if(ForwardGraph[currentFather].addition == 1){
 					// For every node added
 					if(ForwardGraph[currentFather].deletion == 0){
+						for(std::vector<MyPair> ::iterator it=Forward_add[currentFather].begin(); it!=Forward_add[currentFather].end(); it++){
 
-						// Just add the nodes to the queue
-						// TODO
+							// Just add the nodes to the queue
+							Node child=it->b;
 
-					}else{
+							// TODO Checked the version
+							if(it->version > localVersion)
+								continue;
 
+							if(visited[child] >= visitedCounter){	// Explored by the other side
+								if(visited[child] == visitedCounter+1) 	// Found the minimum distance!
+									return dist[child] + dist[currentFather] + 1;
+								continue;
+							}
+							visited[child]=visitedCounter;
+							dist[child]=fGraphDistance;
+							fChildrenCount += ForwardGraph[child].nodes.size();
+							fQueue[iterator+(fQueuePointer^1)*MAXN]=child;
+							iterator++;
+						}
+					}else{		// Deletion == 1
 						// You have to check if it was deleted first
-						// TODO
+						for(std::vector<MyPair> ::iterator it=Forward_add[currentFather].begin(); it!=Forward_add[currentFather].end(); it++){
 
+							Node child=it->b;
+
+							// TODO Checked the version
+							if(it->version > localVersion)
+								continue;
+
+							std::vector<MyPair>:: iterator itD;
+							for(itD=Forward_del[currentFather].begin(); itD!=Forward_del[currentFather].end(); itD++){
+								if(itD->b == child && itD->version > it->version){		// TODO Delete must have happened after the addition
+									break;
+								}
+							}
+							if(itD!=Forward_del[currentFather].end() && itD->version<localVersion){
+								continue;
+							}
+
+							if(visited[child] >= visitedCounter){	// Explored by the other side
+								if(visited[child] == visitedCounter+1) 	// Found the minimum distance!
+									return dist[child] + dist[currentFather] + 1;
+								continue;
+							}
+							visited[child]=visitedCounter;
+							dist[child]=fGraphDistance;
+							fChildrenCount += ForwardGraph[child].nodes.size();
+							fQueue[iterator+(fQueuePointer^1)*MAXN]=child;
+							iterator++;
+						}
 					}
 				}
 			}
@@ -142,7 +221,7 @@ int shortest_path(Node a, Node b) {
 			fCurrentNodes = iterator;
 			fQueuePointer = fQueuePointer^1;
 
-		}else{
+		}else{			// bChildrenCounter > fChildrenCounter
 			bChildrenCount = 0;
 			bGraphDistance++;	// Going to the next distance
 
@@ -167,14 +246,23 @@ int shortest_path(Node a, Node b) {
 						bQueue[iterator+(bQueuePointer^1)*MAXN] = currentChild;
 						iterator++;
 					}
-				}else{
+				}else{		// Deletion == 1
 					// We have to check at every child if it was deleted
 					for(unsigned int j=0; j < BackwardGraph[currentFather].nodes.size(); j++){
 						currentChild = BackwardGraph[currentFather].nodes[j];
 
 						// Check if the node was deleted
 						// If it was continue to the next child;
-						// TODO
+
+						std::vector<MyPair>:: iterator it;
+						for(it=Backward_del[currentFather].begin(); it!=Backward_del[currentFather].end(); it++){
+							if(it->b==currentChild){
+								break;
+							}
+						}
+						if(it!=Backward_del[currentFather].end() && it->version<localVersion){
+							continue;
+						}
 
 						if(visited[currentChild] >= visitedCounter){	// Explored by the other side
 							if(visited[currentChild] == visitedCounter) 	// Found the minimum distance!
@@ -192,16 +280,56 @@ int shortest_path(Node a, Node b) {
 				// Check if there were any additions in the current father node
 				if(BackwardGraph[currentFather].addition == 1){
 					// For every node added
-					if(BackwardGraph[currentFather].deletion == 0){
+					for(std::vector<MyPair> ::iterator it=Backward_add[currentFather].begin(); it!=Backward_add[currentFather].end(); it++){
+						if(BackwardGraph[currentFather].deletion == 0){
 
-						// Just add the nodes to the queue
-						// TODO
+							// Just add the nodes to the queue
+							Node child=it->b;
 
-					}else{
+							// TODO Checked the version
+							if(it->version > localVersion)
+								continue;
 
-						// You have to check if it was deleted first
-						// TODO
+							if(visited[child] >= visitedCounter){	// Explored by the other side
+								if(visited[child] == visitedCounter) 	// Found the minimum distance!
+									return dist[child] + dist[currentFather] + 1;
+								continue;
+							}
+							visited[child]=visitedCounter+1;
+							dist[child]=bGraphDistance;
+							bChildrenCount += BackwardGraph[child].nodes.size();
+							bQueue[iterator+(bQueuePointer^1)*MAXN]=child;
+							iterator++;
 
+						}else{		// Deletion == 1
+							// You have to check if it was deleted first
+							Node child=it->b;
+
+							// TODO Checked the version
+							if(it->version > localVersion)
+								continue;
+
+							std::vector<MyPair>:: iterator itD;
+							for(itD=Backward_del[currentFather].begin(); itD!=Backward_del[currentFather].end(); itD++){
+								if(itD->b == child && itD->version > it->version){		// TODO Delete must have happened after the addition
+									break;
+								}
+							}
+							if(itD!=Backward_del[currentFather].end() && itD->version<localVersion){
+								continue;
+							}
+
+							if(visited[child] >= visitedCounter){	// Explored by the other side
+								if(visited[child] == visitedCounter) 	// Found the minimum distance!
+									return dist[child] + dist[currentFather] + 1;
+								continue;
+							}
+							visited[child]=visitedCounter+1;
+							dist[child]=bGraphDistance;
+							bChildrenCount += BackwardGraph[child].nodes.size();
+							bQueue[iterator+(bQueuePointer^1)*MAXN]=child;
+							iterator++;
+						}
 					}
 				}
 			}
@@ -214,45 +342,26 @@ int shortest_path(Node a, Node b) {
 	}
 }
 
-void add_edge_final(Node a, Node b) {
-  ForwardGraph[a].nodes.push_back(b);
-  BackwardGraph[b].nodes.push_back(a);
-}
-
 int _delete_edge(Node a, vector<Node> &E) {
-	int size = E.size(), newsize = 0;
-	for(int i=0; i < size; i++){
-	E[newsize] = E[i];
-	if(E[i] != a)
+  int size = E.size(), newsize = 0;
+  for(int i=0; i < size; i++){
+    E[newsize] = E[i];
+    if(E[i] != a)
 		newsize++;
-	}
-	if(newsize == size)
-		return 0;
-	E.resize(newsize);
-	return 1;
-}
-
-void delete_edge_final(Node a,Node b) {
-	if(!_delete_edge(b,ForwardGraph[a].nodes) || !_delete_edge(a,BackwardGraph[b].nodes) )
-		return;
-}
-
-void add_edge(Node a, Node b) {
-	// TODO
-	ForwardGraph[a].nodes.push_back(b);
-	BackwardGraph[b].nodes.push_back(a);
+  }
+  if(newsize == size)
+	  return 0;
+  E.resize(newsize);
+  return 1;
 }
 
 void delete_edge(Node a,Node b) {
-	// TODO
-	if(!_delete_edge(b,ForwardGraph[a].nodes) || !_delete_edge(a,BackwardGraph[b].nodes) )
-		return;
+  if(!_delete_edge(b,ForwardGraph[a].nodes) || !_delete_edge(a,BackwardGraph[b].nodes) )
+	  return;
 }
 
-
-// Sorting
-bool sortF(Node a,Node b) { return (ForwardGraph[a].nodes.size()>ForwardGraph[b].nodes.size()); }
-bool sortB(Node a,Node b) { return (BackwardGraph[a].nodes.size()>BackwardGraph[b].nodes.size()); }
+bool sortF(Node a,Node b) { return (ForwardGraph[a].nodes.size() > ForwardGraph[b].nodes.size()); }
+bool sortB(Node a,Node b) { return (BackwardGraph[a].nodes.size() > BackwardGraph[b].nodes.size()); }
 
 void preprocess() {
   for(unsigned int a=1; a < nameChangeCounter; a++) {
@@ -261,12 +370,53 @@ void preprocess() {
   }
 }
 
+// Order the list of vectors, the one with most children first
+void add_edge_final(Node a, Node b) {
+  ForwardGraph[a].nodes.push_back(b);
+  BackwardGraph[b].nodes.push_back(a);
+}
+
+void delete_edge_final(Node a,Node b) {
+	if(!_delete_edge(b,ForwardGraph[a].nodes) || !_delete_edge(a,BackwardGraph[b].nodes) )
+		return;
+}
+
+void multiversion_changing(int graph,int operation,Node a,Node b){
+	MyPair pair;
+
+	pair.version=versionCounter;
+	pair.b=b;
+
+	if(graph==FORWARD){
+		if(operation==ADD){
+			Forward_add[a].push_back(pair);
+			ForwardGraph[a].addition=true;
+		}
+		else{
+			Forward_del[a].push_back(pair);
+			ForwardGraph[a].deletion=true;
+		}
+	}
+	else{
+		if(operation==ADD){
+			Backward_add[a].push_back(pair);
+			BackwardGraph[a].addition=true;
+		}
+		else{
+			Backward_del[a].push_back(pair);
+			BackwardGraph[a].deletion=true;
+		}
+	}
+}
+
 int main() {
 	ios_base::sync_with_stdio(false);
 	cin.tie(nullptr);
 
 	Node a,b;
 	char c;
+	vector<Operation_info> operations;
+	Operation_info info;
 
 	ForwardGraph = (GraphNode*)calloc(MAXN, sizeof(GraphNode));
 	BackwardGraph = (GraphNode*)calloc(MAXN, sizeof(GraphNode));
@@ -275,11 +425,15 @@ int main() {
 	visited = (Node*)calloc(MAXN, sizeof(Node));
 	dist = (Node*)calloc(MAXN, sizeof(Node));
 	nameChange = (Node*)calloc(((size_t)1<<28), sizeof(Node));
+	Forward_del = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
+	Forward_add = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
+	Backward_del = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
+	Backward_add = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
 
 	while(cin >> a >> b){
 		if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 		if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-		add_edge(nameChange[a],nameChange[b]);
+		add_edge_final(nameChange[a],nameChange[b]);
 	}
 
 	preprocess();			// Sorting the biggest Nodes to the front of the lists
@@ -294,8 +448,43 @@ int main() {
 			cout << flush;
 			cin.clear();
 
-			// Add the additions/deletions of this batch to the main graph
-			// TODO
+			for(vector<Operation_info>::iterator it=operations.begin(); it!=operations.end(); it++){
+				if(it->op=='A'){
+					add_edge_final(it->a,it->b);
+					// TODO we can clear an empty vector
+					Forward_add[a].clear();
+					Backward_add[b].clear();
+					/*if(Forward_add[a].size()){
+						Forward_add[a].clear();
+					}
+					if(Backward_add[b].size()){
+						Backward_add[b].clear();
+					}*/
+
+					// here must be changed the flags of the struct ForwardGraph and BackwardGraph
+					ForwardGraph[a].addition=false;
+					BackwardGraph[b].addition=false;
+
+				}else{
+					delete_edge_final(it->a,it->b);
+
+					Forward_del[a].clear();
+					Backward_del[b].clear();
+
+					/*if(Forward_del[a].size()){
+						Forward_del[a].clear();
+					}
+
+					if(Backward_del[b].size()){
+						Backward_del[b].clear();
+					}*/
+
+					BackwardGraph[b].deletion=false;
+					ForwardGraph[a].addition=false;
+				}
+			}
+			operations.clear();
+			versionStart=versionCounter;
 
 			continue;
 		}
@@ -310,16 +499,33 @@ int main() {
 					cout << "0\n";
 				continue;
 			}
-			cout << shortest_path(nameChange[a],nameChange[b]) << "\n";
+			cout << shortest_path(nameChange[a],nameChange[b],versionCounter) << "\n";
+
 		}else if(c == 'A'){
 			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-			add_edge(nameChange[a],nameChange[b]);
-		}
-		else if(c == 'D') {
+			info.op='A'; info.a=nameChange[a]; info.b=nameChange[b];
+			operations.push_back(info);
+
+			multiversion_changing(FORWARD,ADD,nameChange[a],nameChange[b]);
+			//ForwardGraph[a].addition=true;
+			multiversion_changing(BACKWARD,ADD,nameChange[b],nameChange[a]);
+			//BackwardGraph[b].addition=true;
+
+			versionCounter++;
+
+		}else if(c == 'D') {
 			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-			delete_edge(nameChange[a],nameChange[b]);
+			info.op='D'; info.a=nameChange[a]; info.b=nameChange[b];
+			operations.push_back(info);
+
+			multiversion_changing(FORWARD,DELETE,nameChange[a],nameChange[b]);
+			//ForwardGraph[a].deletion=true;
+			multiversion_changing(BACKWARD,DELETE,nameChange[b],nameChange[a]);
+			//BackwardGraph[b].deletion=true;
+
+			versionCounter++;
 		}
 	}
   return 0;
