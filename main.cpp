@@ -61,7 +61,7 @@ unsigned int nameChangeCounter = 1;
 
 
 // Variables for the multiversion
-size_t versionStart=0,versionCounter=0;
+size_t versionCounter=0;
 vector<MyPair> *Forward_add,*Forward_del,*Backward_add,*Backward_del;
 
 
@@ -73,8 +73,10 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 
 	// Initialize Queues and Variables
 	unsigned int fChildrenCount = ForwardGraph[a].nodes.size();
+	bool fChildrenAdded = ForwardGraph[a].addition;
 	unsigned int fCurrentNodes = 1;
 	unsigned int bChildrenCount = BackwardGraph[b].nodes.size();
+	bool bChildrenAdded = BackwardGraph[b].addition;
 	unsigned int bCurrentNodes = 1;
 
 	unsigned int fQueuePointer = 0;
@@ -103,6 +105,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 
 		if(fChildrenCount <= bChildrenCount){	// Move forward, there are less children there
 			fChildrenCount = 0;
+			fChildrenAdded = false;
 			fGraphDistance++;	// Going to the next distance
 
 			// Reading all the children from the nodes in the queue
@@ -123,6 +126,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 						visited[currentChild] = visitedCounter;
 						dist[currentChild] = fGraphDistance;
 						fChildrenCount += ForwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
+						fChildrenAdded = fChildrenAdded || ForwardGraph[currentChild].addition;
 						fQueue[iterator+(fQueuePointer^1)*MAXN] = currentChild;
 						iterator++;
 					}
@@ -152,6 +156,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 						visited[currentChild] = visitedCounter;
 						dist[currentChild] = fGraphDistance;
 						fChildrenCount += ForwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
+						fChildrenAdded = fChildrenAdded || ForwardGraph[currentChild].addition;
 						fQueue[iterator+(fQueuePointer^1)*MAXN] = currentChild;
 						iterator++;
 					}
@@ -166,7 +171,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 							// Just add the nodes to the queue
 							Node child=it->b;
 
-							// TODO Checked the version
+							// The addition must have appeared before the query
 							if(it->version > localVersion)
 								continue;
 
@@ -178,6 +183,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 							visited[child]=visitedCounter;
 							dist[child]=fGraphDistance;
 							fChildrenCount += ForwardGraph[child].nodes.size();
+							fChildrenAdded = fChildrenAdded || ForwardGraph[child].addition;
 							fQueue[iterator+(fQueuePointer^1)*MAXN]=child;
 							iterator++;
 						}
@@ -187,13 +193,13 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 
 							Node child=it->b;
 
-							// TODO Checked the version
+							// The addition must have appeared before the query
 							if(it->version > localVersion)
 								continue;
 
 							std::vector<MyPair>:: iterator itD;
 							for(itD=Forward_del[currentFather].begin(); itD!=Forward_del[currentFather].end(); itD++){
-								if(itD->b == child && itD->version > it->version){		// TODO Delete must have happened after the addition
+								if(itD->b == child && itD->version > it->version){		// Delete must have happened after the addition
 									break;
 								}
 							}
@@ -209,6 +215,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 							visited[child]=visitedCounter;
 							dist[child]=fGraphDistance;
 							fChildrenCount += ForwardGraph[child].nodes.size();
+							fChildrenAdded = fChildrenAdded || ForwardGraph[child].addition;
 							fQueue[iterator+(fQueuePointer^1)*MAXN]=child;
 							iterator++;
 						}
@@ -216,13 +223,14 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 				}
 			}
 
-			if(fChildrenCount == 0)
+			if(fChildrenCount == 0 && !fChildrenAdded)
 				return -1;
 			fCurrentNodes = iterator;
 			fQueuePointer = fQueuePointer^1;
 
 		}else{			// bChildrenCounter > fChildrenCounter
 			bChildrenCount = 0;
+			bChildrenAdded = false;
 			bGraphDistance++;	// Going to the next distance
 
 			// Reading all the children from the nodes in the queue
@@ -243,6 +251,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 						visited[currentChild] = visitedCounter+1;
 						dist[currentChild] = bGraphDistance;
 						bChildrenCount += BackwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
+						bChildrenAdded = bChildrenAdded || BackwardGraph[currentChild].addition;
 						bQueue[iterator+(bQueuePointer^1)*MAXN] = currentChild;
 						iterator++;
 					}
@@ -272,6 +281,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 						visited[currentChild] = visitedCounter+1;
 						dist[currentChild] = bGraphDistance;
 						bChildrenCount += BackwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
+						bChildrenAdded = bChildrenAdded || BackwardGraph[currentChild].addition;
 						bQueue[iterator+(bQueuePointer^1)*MAXN] = currentChild;
 						iterator++;
 					}
@@ -286,7 +296,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 							// Just add the nodes to the queue
 							Node child=it->b;
 
-							// TODO Checked the version
+							// The addition must have appeared before the query
 							if(it->version > localVersion)
 								continue;
 
@@ -298,6 +308,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 							visited[child]=visitedCounter+1;
 							dist[child]=bGraphDistance;
 							bChildrenCount += BackwardGraph[child].nodes.size();
+							bChildrenAdded = bChildrenAdded || BackwardGraph[child].addition;
 							bQueue[iterator+(bQueuePointer^1)*MAXN]=child;
 							iterator++;
 
@@ -305,13 +316,13 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 							// You have to check if it was deleted first
 							Node child=it->b;
 
-							// TODO Checked the version
+							// The addition must have appeared before the query
 							if(it->version > localVersion)
 								continue;
 
 							std::vector<MyPair>:: iterator itD;
 							for(itD=Backward_del[currentFather].begin(); itD!=Backward_del[currentFather].end(); itD++){
-								if(itD->b == child && itD->version > it->version){		// TODO Delete must have happened after the addition
+								if(itD->b == child && itD->version > it->version){		// Delete must have happened after the addition
 									break;
 								}
 							}
@@ -327,6 +338,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 							visited[child]=visitedCounter+1;
 							dist[child]=bGraphDistance;
 							bChildrenCount += BackwardGraph[child].nodes.size();
+							bChildrenAdded = bChildrenAdded || BackwardGraph[child].addition;
 							bQueue[iterator+(bQueuePointer^1)*MAXN]=child;
 							iterator++;
 						}
@@ -334,7 +346,7 @@ int shortest_path(Node a, Node b,size_t localVersion) {
 				}
 			}
 
-			if(bChildrenCount == 0)
+			if(bChildrenCount == 0 && !bChildrenAdded)
 				return -1;
 			bCurrentNodes = iterator;
 			bQueuePointer = bQueuePointer^1;
@@ -451,15 +463,9 @@ int main() {
 			for(vector<Operation_info>::iterator it=operations.begin(); it!=operations.end(); it++){
 				if(it->op=='A'){
 					add_edge_final(it->a,it->b);
-					// TODO we can clear an empty vector
+
 					Forward_add[a].clear();
 					Backward_add[b].clear();
-					/*if(Forward_add[a].size()){
-						Forward_add[a].clear();
-					}
-					if(Backward_add[b].size()){
-						Backward_add[b].clear();
-					}*/
 
 					// here must be changed the flags of the struct ForwardGraph and BackwardGraph
 					ForwardGraph[a].addition=false;
@@ -471,20 +477,11 @@ int main() {
 					Forward_del[a].clear();
 					Backward_del[b].clear();
 
-					/*if(Forward_del[a].size()){
-						Forward_del[a].clear();
-					}
-
-					if(Backward_del[b].size()){
-						Backward_del[b].clear();
-					}*/
-
 					BackwardGraph[b].deletion=false;
 					ForwardGraph[a].addition=false;
 				}
 			}
 			operations.clear();
-			versionStart=versionCounter;
 
 			continue;
 		}
@@ -500,6 +497,7 @@ int main() {
 				continue;
 			}
 			cout << shortest_path(nameChange[a],nameChange[b],versionCounter) << "\n";
+			versionCounter++;
 
 		}else if(c == 'A'){
 			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
@@ -508,9 +506,7 @@ int main() {
 			operations.push_back(info);
 
 			multiversion_changing(FORWARD,ADD,nameChange[a],nameChange[b]);
-			//ForwardGraph[a].addition=true;
 			multiversion_changing(BACKWARD,ADD,nameChange[b],nameChange[a]);
-			//BackwardGraph[b].addition=true;
 
 			versionCounter++;
 
@@ -521,12 +517,11 @@ int main() {
 			operations.push_back(info);
 
 			multiversion_changing(FORWARD,DELETE,nameChange[a],nameChange[b]);
-			//ForwardGraph[a].deletion=true;
 			multiversion_changing(BACKWARD,DELETE,nameChange[b],nameChange[a]);
-			//BackwardGraph[b].deletion=true;
 
 			versionCounter++;
 		}
 	}
   return 0;
 }
+
