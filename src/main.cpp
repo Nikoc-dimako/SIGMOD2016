@@ -15,11 +15,7 @@ using namespace __gnu_cxx;
 #define NUMOFTHREADS 23
 
 #define MAXN ((size_t)1<<24)
-#define FORWARD 0
-#define BACKWARD 1
-#define ADD 0
-#define DELETE 1
-#define MAXTH 2
+
 typedef unsigned int Node;
 
 
@@ -32,12 +28,6 @@ typedef struct GraphNode {
 } GraphNode;
 
 
-struct Operation_info{
-	char op;
-	Node a,b;
-};
-
-
 struct Child_info{
 	Node a;
 	vector<Node> children;
@@ -46,16 +36,8 @@ struct Child_info{
 
 struct MyPair{
 	Node b;
-	size_t version;
+	int version;
 };
-
-typedef struct SP_params {
-   Node a;
-   Node b;
-   size_t localVersion;
-   int resultsCounter;
-} SP_params;
-
 
 // Variables for the Queues
 GraphNode *ForwardGraph, *BackwardGraph;
@@ -73,14 +55,14 @@ unsigned int nameChangeCounter = 1;
 
 
 // Variables for the multiversion
-size_t versionCounter=0;
 vector<MyPair> *Forward_add,*Forward_del,*Backward_add,*Backward_del;
 int results[100000];
-SP_params *parameters;
+
 short int threadCounter = 0;
 unordered_map <pthread_t, short int> threadIds;
 mutex mtx;
 
+int counter = 0;
 void getThreadId(){
 	mtx.lock();
 	unordered_map<pthread_t, short int>::const_iterator um_it = threadIds.find(pthread_self());
@@ -93,13 +75,8 @@ void getThreadId(){
 }
 
 
-void shortest_path(SP_params parameters) {
+void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 	int thread_id = threadIds.find(pthread_self())->second;
-
-	Node a = parameters.a;
-	Node b = parameters.b;
-	size_t localVersion = parameters.localVersion;
-	int resultsCounter = parameters.resultsCounter;
 
 	if(a == b){
 		results[resultsCounter] = 0;
@@ -418,6 +395,23 @@ void shortest_path(SP_params parameters) {
 	}
 }
 
+// Order the list of vectors, the one with most children first
+bool sortF(Node a,Node b) { return (ForwardGraph[a].nodes.size() > ForwardGraph[b].nodes.size()); }
+bool sortB(Node a,Node b) { return (BackwardGraph[a].nodes.size() > BackwardGraph[b].nodes.size()); }
+
+void preprocess() {
+  for(unsigned int a=1; a < nameChangeCounter; a++) {
+    sort(ForwardGraph[a].nodes.begin(),ForwardGraph[a].nodes.end(),sortF);
+    sort(BackwardGraph[a].nodes.begin(),BackwardGraph[a].nodes.end(),sortB);
+  }
+}
+
+
+void add_edge_final(Node a, Node b) {
+  ForwardGraph[a].nodes.push_back(b);
+  BackwardGraph[b].nodes.push_back(a);
+}
+
 int _delete_edge(Node a, vector<Node> &E) {
   int size = E.size(), newsize = 0;
   for(int i=0; i < size; i++){
@@ -431,68 +425,49 @@ int _delete_edge(Node a, vector<Node> &E) {
   return 1;
 }
 
-void delete_edge(Node a,Node b) {
-  if(!_delete_edge(b,ForwardGraph[a].nodes) || !_delete_edge(a,BackwardGraph[b].nodes) )
-	  return;
-}
-
-bool sortF(Node a,Node b) { return (ForwardGraph[a].nodes.size() > ForwardGraph[b].nodes.size()); }
-bool sortB(Node a,Node b) { return (BackwardGraph[a].nodes.size() > BackwardGraph[b].nodes.size()); }
-
-void preprocess() {
-  for(unsigned int a=1; a < nameChangeCounter; a++) {
-    sort(ForwardGraph[a].nodes.begin(),ForwardGraph[a].nodes.end(),sortF);
-    sort(BackwardGraph[a].nodes.begin(),BackwardGraph[a].nodes.end(),sortB);
-  }
-}
-
-// Order the list of vectors, the one with most children first
-void add_edge_final(Node a, Node b) {
-  ForwardGraph[a].nodes.push_back(b);
-  BackwardGraph[b].nodes.push_back(a);
-}
-
 void delete_edge_final(Node a,Node b) {
 	if(!_delete_edge(b,ForwardGraph[a].nodes) || !_delete_edge(a,BackwardGraph[b].nodes) )
 		return;
 }
 
-void multiversion_changing(int graph,int operation,Node a,Node b){
-	MyPair pair;
+void add_edge(Node a, Node b, int versionCounter){
+	MyPair fPair, bPair;
+	fPair.version=versionCounter;
+	fPair.b=b;
 
-	pair.version=versionCounter;
-	pair.b=b;
+	bPair.version=versionCounter;
+	bPair.b=a;
 
-	if(graph==FORWARD){
-		if(operation==ADD){
-			Forward_add[a].push_back(pair);
-			ForwardGraph[a].addition=true;
-		}
-		else{
-			Forward_del[a].push_back(pair);
-			ForwardGraph[a].deletion=true;
-		}
-	}
-	else{
-		if(operation==ADD){
-			Backward_add[a].push_back(pair);
-			BackwardGraph[a].addition=true;
-		}
-		else{
-			Backward_del[a].push_back(pair);
-			BackwardGraph[a].deletion=true;
-		}
-	}
+	Forward_add[a].push_back(fPair);
+	ForwardGraph[a].addition=true;
+
+	Backward_add[b].push_back(bPair);
+	BackwardGraph[b].addition=true;
 }
+
+void delete_edge(Node a, Node b, int versionCounter){
+	MyPair fPair, bPair;
+	fPair.version=versionCounter;
+	fPair.b=b;
+
+	bPair.version=versionCounter;
+	bPair.b=a;
+
+	Forward_del[a].push_back(fPair);
+	ForwardGraph[a].deletion=true;
+
+	Backward_del[b].push_back(bPair);
+	BackwardGraph[b].deletion=true;
+}
+
 
 int main() {
 	ios_base::sync_with_stdio(false);
 	cin.tie(nullptr);
 
+	int versionCounter=0;
 	Node a,b;
 	char c;
-	vector<Operation_info> operations;
-	Operation_info info;
 	int resultsCounter = 0;
 
 	ForwardGraph = (GraphNode*)calloc(MAXN, sizeof(GraphNode));
@@ -509,7 +484,6 @@ int main() {
 	visited_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
 	dist_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
 	visitedCounter_global = (unsigned int*)calloc(NUMOFTHREADS, sizeof(unsigned int));
-	parameters = (SP_params*)calloc(NUMOFTHREADS, sizeof(SP_params));
 	for(int i=0; i<NUMOFTHREADS; i++){
 		fQueue_global[i] = (Node*)calloc(MAXN*2, sizeof(Node));
 		bQueue_global[i] = (Node*)calloc(MAXN*2, sizeof(Node));
@@ -522,8 +496,6 @@ int main() {
 		if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 		add_edge_final(nameChange[a],nameChange[b]);
 	}
-
-	SP_params parameters;
 
 	preprocess();			// Sorting the biggest Nodes to the front of the lists
 
@@ -540,6 +512,7 @@ int main() {
 	cin.clear();
 	cin >> c;
 
+	Node tempa, tempb;
 	while(cin >> c) {
 		if(c == 'F') {
 			pool.waitAll();
@@ -550,28 +523,6 @@ int main() {
 			cout << flush;
 			cin.clear();
 
-			/*for(vector<Operation_info>::iterator it=operations.begin(); it!=operations.end(); it++){
-				if(it->op=='A'){
-					add_edge_final(it->a,it->b);
-
-					Forward_add[a].clear();
-					Backward_add[b].clear();
-
-					// here must be changed the flags of the struct ForwardGraph and BackwardGraph
-					ForwardGraph[a].addition=false;
-					BackwardGraph[b].addition=false;
-
-				}else{
-					delete_edge_final(it->a,it->b);
-
-					Forward_del[a].clear();
-					Backward_del[b].clear();
-
-					BackwardGraph[b].deletion=false;
-					ForwardGraph[a].addition=false;
-				}
-			}
-			operations.clear();*/
 			resultsCounter = 0;
 
 			continue;
@@ -589,37 +540,27 @@ int main() {
 				continue;
 			}
 
-			parameters.a = nameChange[a];
-			parameters.b = nameChange[b];
-			parameters.localVersion = versionCounter;
-			parameters.resultsCounter = resultsCounter;
-
-			pool.postWork<void>([parameters] {  shortest_path(parameters);  });
+			tempa = nameChange[a];
+			tempb = nameChange[b];
+			pool.postWork<void>([tempa, tempb, versionCounter, resultsCounter] {  shortest_path(tempa, tempb, versionCounter, resultsCounter);  });
 			versionCounter++;
 			resultsCounter++;
 
 		}else if(c == 'A'){
 			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-			//info.op='A'; info.a=nameChange[a]; info.b=nameChange[b];
-			//operations.push_back(info);	v2
 
-			multiversion_changing(FORWARD,ADD,nameChange[a],nameChange[b]);
-			multiversion_changing(BACKWARD,ADD,nameChange[b],nameChange[a]);
-
+			add_edge(nameChange[a], nameChange[b], versionCounter);
 			versionCounter++;
 
 		}else if(c == 'D') {
 			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-			//info.op='D'; info.a=nameChange[a]; info.b=nameChange[b];
-			//operations.push_back(info);	v2
 
-			multiversion_changing(FORWARD,DELETE,nameChange[a],nameChange[b]);
-			multiversion_changing(BACKWARD,DELETE,nameChange[b],nameChange[a]);
-
+			delete_edge(nameChange[a], nameChange[b], versionCounter);
 			versionCounter++;
 		}
 	}
   return 0;
 }
+
