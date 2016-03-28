@@ -14,7 +14,8 @@ using namespace __gnu_cxx;
 
 #define NUMOFTHREADS 23
 
-#define MAXN ((size_t)1<<24)
+#define MAXN ((size_t)1<<28)
+#define NAMECHANGESIZE ((size_t)1<<31)
 
 typedef unsigned int Node;
 
@@ -66,7 +67,7 @@ int counter = 0;
 void getThreadId(){
 	mtx.lock();
 	unordered_map<pthread_t, short int>::const_iterator um_it = threadIds.find(pthread_self());
-	cerr << "Thread id " <<  pthread_self() << " -> "<< threadCounter << endl;
+	//cerr << "Thread id " <<  pthread_self() << " -> "<< threadCounter << endl;
 	threadIds.emplace(pthread_self(), threadCounter);
 	threadCounter++;
 	mtx.unlock();
@@ -80,6 +81,7 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 
 	if(a == b){
 		results[resultsCounter] = 0;
+
 		return;
 	}
 
@@ -142,6 +144,7 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 						if(visited[currentChild] >= visitedCounter){	// Explored by the other side
 							if(visited[currentChild] == visitedCounter+1){ 	// Found the minimum distance!
 								results[resultsCounter] = dist[currentChild] + dist[currentFather] + 1;
+
 								return;
 							}
 							continue;
@@ -472,7 +475,7 @@ int main() {
 
 	ForwardGraph = (GraphNode*)calloc(MAXN, sizeof(GraphNode));
 	BackwardGraph = (GraphNode*)calloc(MAXN, sizeof(GraphNode));
-	nameChange = (Node*)calloc(((size_t)1<<28), sizeof(Node));
+	nameChange = (Node*)calloc(NAMECHANGESIZE, sizeof(Node));
 	Forward_del = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
 	Forward_add = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
 	Backward_del = (vector<MyPair>*)calloc(MAXN, sizeof(vector<MyPair>));
@@ -500,12 +503,19 @@ int main() {
 	preprocess();			// Sorting the biggest Nodes to the front of the lists
 
 	// Creating Threads
-	threadpool11::Pool pool;
-	pool.setWorkerCount(NUMOFTHREADS);
+	//size_t numOfThreads = 1;
+	threadpool11::Pool query_pool;
+	query_pool.setWorkerCount(NUMOFTHREADS);
 
 	for(int i=0; i<NUMOFTHREADS; i++)
-		pool.postWork<void>(getThreadId);
-	pool.waitAll();
+		query_pool.postWork<void>(getThreadId);
+	query_pool.waitAll();
+
+	/*	int load20ormore = 0;
+	int load16ormore = 0;
+	int load10ormore = 0;
+	int load5ormore = 0;
+	int fiveorless = 0;*/
 
 	cout << "R" << endl << flush;
 
@@ -515,7 +525,7 @@ int main() {
 	Node tempa, tempb;
 	while(cin >> c) {
 		if(c == 'F') {
-			pool.waitAll();
+			query_pool.waitAll();
 			// Print the results
 			for(int i=0; i<resultsCounter; i++)
 				cout << results[i] << endl;
@@ -542,7 +552,17 @@ int main() {
 
 			tempa = nameChange[a];
 			tempb = nameChange[b];
-			pool.postWork<void>([tempa, tempb, versionCounter, resultsCounter] {  shortest_path(tempa, tempb, versionCounter, resultsCounter);  });
+			/*			if(query_pool.getActiveWorkerCount() > 20)
+				load20ormore++;
+			else if(query_pool.getActiveWorkerCount() > 16)
+				load16ormore++;
+			else if(query_pool.getActiveWorkerCount() > 10)
+				load10ormore++;
+			else if(query_pool.getActiveWorkerCount() > 5)
+				load5ormore++;
+			else
+				fiveorless++;*/
+			query_pool.postWork<void>([tempa, tempb, versionCounter, resultsCounter] {  shortest_path(tempa, tempb, versionCounter, resultsCounter);  });
 			versionCounter++;
 			resultsCounter++;
 
@@ -561,6 +581,10 @@ int main() {
 			versionCounter++;
 		}
 	}
-  return 0;
+
+	//fprintf(stderr,"Workload >20:%d, >16:%d, >10:%d, >5:%d, <=5:%d\n",load20ormore, load16ormore, load10ormore, load5ormore, fiveorless);
+
+	return 0;
 }
+
 
