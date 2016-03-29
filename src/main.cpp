@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <algorithm>
 #include <unordered_map>
-#include <mutex>
 
 #include "threadpool11/threadpool11.hpp"
 
@@ -34,16 +33,19 @@ struct Child_info{
 	vector<Node> children;
 };
 
-
 struct MyPair{
 	Node b;
 	int version;
 };
 
+struct Operation_info{
+	char op;
+	Node a,b;
+};
+
 // Variables for the Queues
 GraphNode *ForwardGraph, *BackwardGraph;
 Node **visited_global;
-Node **dist_global;
 Node **fQueue_global;
 Node **bQueue_global;
 unsigned int *visitedCounter_global;
@@ -59,14 +61,14 @@ unsigned int nameChangeCounter = 1;
 vector<MyPair> *Forward_add,*Forward_del,*Backward_add,*Backward_del;
 int results[100000];
 
-short int threadCounter = 0;
-unordered_map <pthread_t, short int> threadIds;
+int threadCounter = 0;
+unordered_map <pthread_t, int> threadIds;
 mutex mtx;
 
 int counter = 0;
 void getThreadId(){
 	mtx.lock();
-	unordered_map<pthread_t, short int>::const_iterator um_it = threadIds.find(pthread_self());
+	unordered_map<pthread_t, int>::const_iterator um_it = threadIds.find(pthread_self());
 	//cerr << "Thread id " <<  pthread_self() << " -> "<< threadCounter << endl;
 	threadIds.emplace(pthread_self(), threadCounter);
 	threadCounter++;
@@ -86,7 +88,6 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 	}
 
 	Node *visited = visited_global[thread_id];
-	Node *dist = dist_global[thread_id];
 	Node *fQueue = fQueue_global[thread_id];
 	Node *bQueue = bQueue_global[thread_id];
 
@@ -112,8 +113,6 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 	unsigned int bGraphDistance = 0;
 	visited[a] = visitedCounter;
 	visited[b] = visitedCounter+1;
-	dist[a] = 0;
-	dist[b] = 0;
 
 	unsigned int iterator;
 	Node currentFather;
@@ -143,14 +142,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 						currentChild = ForwardGraph[currentFather].nodes[j];
 						if(visited[currentChild] >= visitedCounter){	// Explored by the other side
 							if(visited[currentChild] == visitedCounter+1){ 	// Found the minimum distance!
-								results[resultsCounter] = dist[currentChild] + dist[currentFather] + 1;
-
+								results[resultsCounter] = fGraphDistance + bGraphDistance;
 								return;
 							}
 							continue;
 						}
 						visited[currentChild] = visitedCounter;
-						dist[currentChild] = fGraphDistance;
 						fChildrenCount += ForwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
 						fChildrenAdded = fChildrenAdded || ForwardGraph[currentChild].addition;
 						fQueue[iterator+(fQueuePointer^1)*MAXN] = currentChild;
@@ -176,13 +173,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 
 						if(visited[currentChild] >= visitedCounter){	// Explored by the other side
 							if(visited[currentChild] == visitedCounter+1){ 	// Found the minimum distance!
-								results[resultsCounter] = dist[currentChild] + dist[currentFather] + 1;
+								results[resultsCounter] = fGraphDistance + bGraphDistance;
 								return;
 							}
 							continue;
 						}
 						visited[currentChild] = visitedCounter;
-						dist[currentChild] = fGraphDistance;
 						fChildrenCount += ForwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
 						fChildrenAdded = fChildrenAdded || ForwardGraph[currentChild].addition;
 						fQueue[iterator+(fQueuePointer^1)*MAXN] = currentChild;
@@ -205,13 +201,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 
 							if(visited[child] >= visitedCounter){	// Explored by the other side
 								if(visited[child] == visitedCounter+1){ 	// Found the minimum distance!
-									results[resultsCounter] = dist[child] + dist[currentFather] + 1;
+									results[resultsCounter] = fGraphDistance + bGraphDistance;
 									return;
 								}
 								continue;
 							}
 							visited[child]=visitedCounter;
-							dist[child]=fGraphDistance;
 							fChildrenCount += ForwardGraph[child].nodes.size();
 							fChildrenAdded = fChildrenAdded || ForwardGraph[child].addition;
 							fQueue[iterator+(fQueuePointer^1)*MAXN]=child;
@@ -239,13 +234,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 
 							if(visited[child] >= visitedCounter){	// Explored by the other side
 								if(visited[child] == visitedCounter+1){ 	// Found the minimum distance!
-									results[resultsCounter] = dist[child] + dist[currentFather] + 1;
+									results[resultsCounter] = fGraphDistance + bGraphDistance;
 									return;
 								}
 								continue;
 							}
 							visited[child]=visitedCounter;
-							dist[child]=fGraphDistance;
 							fChildrenCount += ForwardGraph[child].nodes.size();
 							fChildrenAdded = fChildrenAdded || ForwardGraph[child].addition;
 							fQueue[iterator+(fQueuePointer^1)*MAXN]=child;
@@ -279,13 +273,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 						currentChild = BackwardGraph[currentFather].nodes[j];
 						if(visited[currentChild] >= visitedCounter){	// Explored by the other side
 							if(visited[currentChild] == visitedCounter){ 	// Found the minimum distance!
-								results[resultsCounter] = dist[currentChild] + dist[currentFather] + 1;
+								results[resultsCounter] = fGraphDistance + bGraphDistance;
 								return;
 							}
 							continue;
 						}
 						visited[currentChild] = visitedCounter+1;
-						dist[currentChild] = bGraphDistance;
 						bChildrenCount += BackwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
 						bChildrenAdded = bChildrenAdded || BackwardGraph[currentChild].addition;
 						bQueue[iterator+(bQueuePointer^1)*MAXN] = currentChild;
@@ -311,13 +304,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 
 						if(visited[currentChild] >= visitedCounter){	// Explored by the other side
 							if(visited[currentChild] == visitedCounter){ 	// Found the minimum distance!
-								results[resultsCounter] = dist[currentChild] + dist[currentFather] + 1;
+								results[resultsCounter] = fGraphDistance + bGraphDistance;
 								return;
 							}
 							continue;
 						}
 						visited[currentChild] = visitedCounter+1;
-						dist[currentChild] = bGraphDistance;
 						bChildrenCount += BackwardGraph[currentChild].nodes.size();	// Counting the children of the next stage
 						bChildrenAdded = bChildrenAdded || BackwardGraph[currentChild].addition;
 						bQueue[iterator+(bQueuePointer^1)*MAXN] = currentChild;
@@ -340,13 +332,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 
 							if(visited[child] >= visitedCounter){	// Explored by the other side
 								if(visited[child] == visitedCounter){ 	// Found the minimum distance!
-									results[resultsCounter] = dist[child] + dist[currentFather] + 1;
+									results[resultsCounter] = fGraphDistance + bGraphDistance;
 									return;
 								}
 								continue;
 							}
 							visited[child]=visitedCounter+1;
-							dist[child]=bGraphDistance;
 							bChildrenCount += BackwardGraph[child].nodes.size();
 							bChildrenAdded = bChildrenAdded || BackwardGraph[child].addition;
 							bQueue[iterator+(bQueuePointer^1)*MAXN]=child;
@@ -372,13 +363,12 @@ void shortest_path(Node a, Node b, int localVersion, int resultsCounter) {
 
 							if(visited[child] >= visitedCounter){	// Explored by the other side
 								if(visited[child] == visitedCounter){ 	// Found the minimum distance!
-									results[resultsCounter] = dist[child] + dist[currentFather] + 1;
+									results[resultsCounter] = fGraphDistance + bGraphDistance;
 									return;
 								}
 								continue;
 							}
 							visited[child]=visitedCounter+1;
-							dist[child]=bGraphDistance;
 							bChildrenCount += BackwardGraph[child].nodes.size();
 							bChildrenAdded = bChildrenAdded || BackwardGraph[child].addition;
 							bQueue[iterator+(bQueuePointer^1)*MAXN]=child;
@@ -473,6 +463,9 @@ int main() {
 	char c;
 	int resultsCounter = 0;
 
+	vector<Operation_info> operations(10000);
+	Operation_info info;
+
 	ForwardGraph = (GraphNode*)calloc(MAXN, sizeof(GraphNode));
 	BackwardGraph = (GraphNode*)calloc(MAXN, sizeof(GraphNode));
 	nameChange = (Node*)calloc(NAMECHANGESIZE, sizeof(Node));
@@ -485,13 +478,11 @@ int main() {
 	fQueue_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
 	bQueue_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
 	visited_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
-	dist_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
 	visitedCounter_global = (unsigned int*)calloc(NUMOFTHREADS, sizeof(unsigned int));
 	for(int i=0; i<NUMOFTHREADS; i++){
 		fQueue_global[i] = (Node*)calloc(MAXN*2, sizeof(Node));
 		bQueue_global[i] = (Node*)calloc(MAXN*2, sizeof(Node));
 		visited_global[i] = (Node*)calloc(MAXN, sizeof(Node));
-		dist_global[i] = (Node*)calloc(MAXN, sizeof(Node));
 	}
 
 	while(cin >> a >> b){
@@ -535,6 +526,36 @@ int main() {
 
 			resultsCounter = 0;
 
+			for(vector<Operation_info>::iterator it=operations.begin(); it!=operations.end(); it++){
+				if(it->op=='A'){
+					add_edge_final(it->a,it->b);
+					if(Forward_add[a].size()){
+						Forward_add[a].clear();
+					}
+					// here must be changed the flags of the struct ForwardGraph and BackwardGraph
+					if(Backward_add[b].size()){
+						Backward_add[b].clear();
+					}
+
+					ForwardGraph[a].addition=false;
+					BackwardGraph[b].addition=false;
+				}
+				else{
+					delete_edge_final(it->a,it->b);
+
+					if(Forward_del[a].size()){
+						Forward_del[a].clear();
+					}
+
+					if(Backward_del[b].size()){
+						Backward_del[b].clear();
+					}
+
+					BackwardGraph[b].deletion=false;
+					ForwardGraph[a].addition=false;
+				}
+			}
+			operations.clear();
 			continue;
 		}
 
@@ -571,6 +592,10 @@ int main() {
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 
 			add_edge(nameChange[a], nameChange[b], versionCounter);
+
+			info.op=c; info.a=nameChange[a]; info.b=nameChange[b];
+			operations.push_back(info);
+
 			versionCounter++;
 
 		}else if(c == 'D') {
@@ -578,6 +603,10 @@ int main() {
 			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 
 			delete_edge(nameChange[a], nameChange[b], versionCounter);
+
+			info.op=c; info.a=nameChange[a]; info.b=nameChange[b];
+			operations.push_back(info);
+
 			versionCounter++;
 		}
 	}
