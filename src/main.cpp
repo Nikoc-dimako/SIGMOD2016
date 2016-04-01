@@ -85,12 +85,16 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 			results[resultsCounter] = -1;
 		else
 			results[resultsCounter] = 0;
-		resultsCounter++;
 		return;
 	}
 
 	Node a = nameChange[tempa];
 	Node b = nameChange[tempb];
+
+	if(a == b){
+		results[resultsCounter] = 0;
+		return;
+	}
 
 	int thread_id = threadIds.find(pthread_self())->second;
 
