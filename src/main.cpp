@@ -17,7 +17,7 @@ using namespace __gnu_cxx;
 #define NAMECHANGESIZE ((size_t)1<<28)
 
 typedef unsigned int Node;
-
+typedef unsigned short int Visitor;
 
 typedef struct GraphNode {
    bool addition;
@@ -45,10 +45,10 @@ struct Operation_info{
 
 // Variables for the Queues
 GraphNode *ForwardGraph, *BackwardGraph;
-Node **visited_global;
+Visitor **visited_global;
 Node **fQueue_global;
 Node **bQueue_global;
-unsigned int *visitedCounter_global;
+Visitor *visitedCounter_global;
 
 
 //Variables for the node's nameChange
@@ -85,6 +85,7 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 			results[resultsCounter] = -1;
 		else
 			results[resultsCounter] = 0;
+		resultsCounter++;
 		return;
 	}
 
@@ -93,7 +94,7 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 	int thread_id = threadIds.find(pthread_self())->second;
 
-	Node *visited = visited_global[thread_id];
+	Visitor *visited = visited_global[thread_id];
 	Node *fQueue = fQueue_global[thread_id];
 	Node *bQueue = bQueue_global[thread_id];
 
@@ -486,12 +487,12 @@ int main() {
 	// Creating structures for each thread
 	fQueue_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
 	bQueue_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
-	visited_global = (Node**)calloc(NUMOFTHREADS, sizeof(Node*));
-	visitedCounter_global = (unsigned int*)calloc(NUMOFTHREADS, sizeof(unsigned int));
+	visited_global = (Visitor**)calloc(NUMOFTHREADS, sizeof(Visitor*));
+	visitedCounter_global = (Visitor*)calloc(NUMOFTHREADS, sizeof(Visitor));
 	for(int i=0; i<NUMOFTHREADS; i++){
 		fQueue_global[i] = (Node*)calloc(MAXN*2, sizeof(Node));
 		bQueue_global[i] = (Node*)calloc(MAXN*2, sizeof(Node));
-		visited_global[i] = (Node*)calloc(MAXN, sizeof(Node));
+		visited_global[i] = (Visitor*)calloc(MAXN, sizeof(Visitor));
 	}
 
 	while(cin >> a >> b){
@@ -580,7 +581,8 @@ int main() {
 			versionCounter++;
 
 		}else{
-			if(!nameChange[a] || ! nameChange[b]) continue;
+			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
+			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 
 			delete_edge(nameChange[a], nameChange[b], versionCounter);
 
@@ -590,22 +592,6 @@ int main() {
 			versionCounter++;
 		}
 	}
-
-	/*int deletion2ormore = 0;
-	int deletion3ormore = 0;
-	int deletion4ormore = 0;
-	for(unsigned int i=0; i<nameChangeCounter; i++){
-		if(Forward_del[i].size() == 2)
-			deletion2ormore++;
-		else if(Forward_del[i].size() == 3)
-			deletion3ormore++;
-		else if(Forward_del[i].size() > 3)
-			deletion4ormore++;
-	}
-
-	cerr << "2 deletions : " << deletion2ormore << endl;
-	cerr << "3 deletions : " << deletion3ormore << endl;
-	cerr << "4+ deletions : " << deletion4ormore << endl;*/
 
 	return 0;
 }
