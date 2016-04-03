@@ -30,6 +30,8 @@ This file is part of threadpool11.
 #include <memory>
 #include <mutex>
 
+#include "concurrentqueue.h"
+
 #if defined(WIN32) && defined(threadpool11_DLL)
 #ifdef threadpool11_EXPORTING
 #define threadpool11_EXPORT __declspec(dllexport)
@@ -216,10 +218,7 @@ private:
   // bool work_signal_prot; //! wake up protection // <- work_queue_size is used instead of this
   std::condition_variable work_signal_;
 
-  std::unique_ptr<
-      boost::lockfree::
-          queue<Work::Callable*, boost::parameter::void_, boost::parameter::void_, boost::parameter::void_>>
-      work_queue_;
+  std::unique_ptr< moodycamel::ConcurrentQueue<Work::Callable*>> work_queue_;
   std::atomic<size_t> work_queue_size_;
 };
 

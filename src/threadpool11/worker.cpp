@@ -42,8 +42,7 @@ void Worker::execute(Pool& pool) {
 
     ++pool.active_worker_count_;
 
-    while (work_type != Work::Type::TERMINAL
-           && pool.work_queue_->pop(work_ptr)) {
+    while (work_type != Work::Type::TERMINAL && pool.work_queue_->try_dequeue(work_ptr)) {
       --pool.work_queue_size_;
 
       const std::unique_ptr<Work::Callable> work(work_ptr);

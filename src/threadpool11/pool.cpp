@@ -20,8 +20,6 @@ This file is part of threadpool11.
 
 #include "pool.hpp"
 
-#include <boost/lockfree/queue.hpp>
-
 #include <algorithm>
 
 namespace threadpool11 {
@@ -30,7 +28,7 @@ Pool::Pool(std::size_t worker_count)
     : worker_count_(0)
     , active_worker_count_(0)
     , are_all_really_finished_{true}
-    , work_queue_(new boost::lockfree::queue<Work::Callable*>(0))
+    , work_queue_(new moodycamel::ConcurrentQueue<Work::Callable*>(0))
     , work_queue_size_(0) {
   spawnWorkers(worker_count);
 }
@@ -92,7 +90,7 @@ void Pool::push(Work::Callable* workFunc) {
 
   std::unique_lock<std::mutex> work_signal_lock(work_signal_mutex_);
   ++work_queue_size_;
-  work_queue_->push(workFunc);
+  work_queue_->enqueue(workFunc);
   work_signal_.notify_one();
 }
 }
