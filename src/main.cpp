@@ -136,9 +136,12 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 	Visitor *visited = visited_global[thread_id];
 	Node *fFrontQueue = fQueue_global[thread_id][0];
 	Node *fNextQueue = fQueue_global[thread_id][1];
+	Node *fNextQueue_iter;
 
 	Node *bFrontQueue = bQueue_global[thread_id][0];
 	Node *bNextQueue = bQueue_global[thread_id][1];
+	Node *bNextQueue_iter;
+
 
 	if(visitedCounter_global[thread_id] == 65534)
 		memset(visited, 0, MAXN);
@@ -170,14 +173,15 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 	const GNode *const BGraph = BackwardG;
 
 	while(1){
-		unsigned int iterator = 0;
+		//unsigned int iterator = 0;
 
 		if(fChildrenCount <= bChildrenCount){	// Move forward, there are less children there
 			fChildrenCount = 0;
+			fNextQueue_iter = fNextQueue;
 			fGraphDistance++;	// Going to the next distance
 
 			// Reading all the children from the nodes in the queue
-			for(unsigned int n=0; n < fCurrentNodes; n++){
+			for(int n=fCurrentNodes-1; n >= 0; n--){
 				const unsigned int currentFather = fFrontQueue[n];
 				fChildrenCount += FGraph[currentFather].children;
 
@@ -185,14 +189,14 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 				if(FGraph[currentFather].deletion == 0){	// Just check the children nodes
 
 					// Reading the children of the current node in the queue
-					const Node start = FGraph[currentFather].start;
-					const unsigned int size = FGraph[currentFather+1].start - start;
-					for(unsigned int j=0; j < size; j++){
-						const Node currentChild = Nodes[start+j];
+					const unsigned int end = FGraph[currentFather+1].start;
+					for(unsigned int j=FGraph[currentFather].start; j < end; j++){
+						const Node currentChild = Nodes[j];
 						if(visited[currentChild] < visitedCounter){	// Explored by the other side
 							visited[currentChild] = visitedCounter;
-							fNextQueue[iterator] = currentChild;
-							iterator++;
+							*fNextQueue_iter = currentChild;
+							fNextQueue_iter++;
+							//iterator++;
 						}
 						else{
 							if(visited[currentChild] == visitedCounter+1){ 	// Found the minimum distance!
@@ -203,10 +207,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 					}
 				}else{		// Deletion == 1
 					// We have to check at every child if it was deleted
-					const Node start = FGraph[currentFather].start;
-					const unsigned int size = FGraph[currentFather+1].start - start;
-					for(unsigned int j=0; j < size; j++){
-						const Node currentChild = Nodes[start+j];
+					const unsigned int end = FGraph[currentFather+1].start;
+					for(unsigned int j=FGraph[currentFather].start; j < end; j++){
+						const Node currentChild = Nodes[j];
 
 						// Check if the node was deleted
 						// If it was continue to the next child;
@@ -223,8 +226,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 						if(visited[currentChild] < visitedCounter){	// Explored by the other side
 							visited[currentChild] = visitedCounter;
-							fNextQueue[iterator] = currentChild;
-							iterator++;
+							*fNextQueue_iter = currentChild;
+							fNextQueue_iter++;
+							//iterator++;
 						}
 						else{
 							if(visited[currentChild] == visitedCounter+1){ 	// Found the minimum distance!
@@ -251,8 +255,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 							if(visited[child] < visitedCounter){	// Explored by the other side
 								visited[child]=visitedCounter;
-								fNextQueue[iterator] = child;
-								iterator++;
+								*fNextQueue_iter = child;
+								fNextQueue_iter++;
+								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter+1){ 	// Found the minimum distance!
@@ -283,8 +288,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 							if(visited[child] < visitedCounter){	// Explored by the other side
 								visited[child]=visitedCounter;
-								fNextQueue[iterator] = child;
-								iterator++;
+								*fNextQueue_iter = child;
+								fNextQueue_iter++;
+								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter+1){ 	// Found the minimum distance!
@@ -297,21 +303,22 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 				}
 			}
 
-			if(iterator == 0){
+			if(fNextQueue == fNextQueue_iter){
 				results[resultsCounter] = -1;
 				return;
 			}
-			fCurrentNodes = iterator;
+			fCurrentNodes = (unsigned int)(fNextQueue_iter - fNextQueue);
 			Node * temp = fNextQueue;
 			fNextQueue = fFrontQueue;
 			fFrontQueue = temp;
 
 		}else{			// bChildrenCounter > fChildrenCounter
 			bChildrenCount = 0;
+			bNextQueue_iter = bNextQueue;
 			bGraphDistance++;	// Going to the next distance
 
 			// Reading all the children from the nodes in the queue
-			for(unsigned int n=0; n < bCurrentNodes; n++){
+			for(int n=bCurrentNodes-1; n >= 0; n--){
 				const unsigned int currentFather = bFrontQueue[n];
 				bChildrenCount += BGraph[currentFather].children;
 
@@ -319,14 +326,14 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 				if(BGraph[currentFather].deletion == 0){	// Just check the children nodes
 
 					// Reading the children of the current node in the queue
-					const Node start = BGraph[currentFather].start;
-					const unsigned int size = BGraph[currentFather+1].start - start;
-					for(unsigned int j=0; j < size; j++){
-						const Node currentChild = Nodes[start+j];
+					const unsigned int end = BGraph[currentFather+1].start;
+					for(unsigned int j=BGraph[currentFather].start; j < end; j++){
+						const Node currentChild = Nodes[j];
 						if(visited[currentChild] < visitedCounter){	// Explored by the other side
 							visited[currentChild] = visitedCounter + 1;
-							bNextQueue[iterator] = currentChild;
-							iterator++;
+							*bNextQueue_iter = currentChild;
+							bNextQueue_iter++;
+							//iterator++;
 						}
 						else{
 							if(visited[currentChild] == visitedCounter){ 	// Found the minimum distance!
@@ -337,10 +344,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 					}
 				}else{		// Deletion == 1
 					// We have to check at every child if it was deleted
-					const Node start = BGraph[currentFather].start;
-					const unsigned int size = BGraph[currentFather+1].start - start;
-					for(unsigned int j=0; j < size; j++){
-						const Node currentChild = Nodes[start+j];
+					const unsigned int end = BGraph[currentFather+1].start;
+					for(unsigned int j=BGraph[currentFather].start; j < end; j++){
+						const Node currentChild = Nodes[j];
 
 						// Check if the node was deleted
 						// If it was continue to the next child;
@@ -357,8 +363,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 						if(visited[currentChild] < visitedCounter){	// Explored by the other side
 							visited[currentChild] = visitedCounter + 1;
-							bNextQueue[iterator] = currentChild;
-							iterator++;
+							*bNextQueue_iter = currentChild;
+							bNextQueue_iter++;
+							//iterator++;
 						}
 						else{
 							if(visited[currentChild] == visitedCounter){ 	// Found the minimum distance!
@@ -385,8 +392,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 							if(visited[child] < visitedCounter){	// Explored by the other side
 								visited[child]=visitedCounter + 1;
-								bNextQueue[iterator] = child;
-								iterator++;
+								*bNextQueue_iter = child;
+								bNextQueue_iter++;
+								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter){ 	// Found the minimum distance!
@@ -417,8 +425,9 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 							if(visited[child] < visitedCounter){	// Explored by the other side
 								visited[child]=visitedCounter + 1;
-								bNextQueue[iterator] = child;
-								iterator++;
+								*bNextQueue_iter = child;
+								bNextQueue_iter++;
+								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter){ 	// Found the minimum distance!
@@ -431,11 +440,11 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 				}
 			}
 
-			if(iterator == 0){
+			if(bNextQueue_iter == bNextQueue){
 				results[resultsCounter] = -1;
 				return;
 			}
-			bCurrentNodes = iterator;
+			bCurrentNodes = (unsigned int)(bNextQueue_iter - bNextQueue);
 			Node * temp = bNextQueue;
 			bNextQueue = bFrontQueue;
 			bFrontQueue = temp;
@@ -741,5 +750,4 @@ int main() {
 
 	return 0;
 }
-
 
