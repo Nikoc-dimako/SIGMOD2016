@@ -13,7 +13,13 @@
 #include "threadpool11/threadpool11.hpp"
 
 // #include <fstream>
+/*
+conditions 
+int q1smaller = ForwardG[nameChange[q1.a]].children > BackwardG[nameChange[q1.b]].children ? nameChange[q1.a] : nameChange[q1.b];
+	  int q2smaller = ForwardG[nameChange[q2.a]].children > BackwardG[nameChange[q2.b]].children ? nameChange[q2.a] : nameChange[q2.b];
 
+   	return q1smaller > q2smaller;
+*/
 
 using namespace std;
 using namespace __gnu_cxx;
