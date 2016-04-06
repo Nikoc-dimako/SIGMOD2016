@@ -9,7 +9,7 @@
 
 #include "threadpool11/threadpool11.hpp"
 
-#include <fstream>
+// #include <fstream>
 
 
 using namespace std;
@@ -37,7 +37,6 @@ typedef struct GraphNode {
 // Try without children
 typedef struct GNode {
 	unsigned int start;
-	unsigned int numOfNodes;
 	unsigned int children;
 	bool addition;
 	bool deletion;
@@ -46,7 +45,6 @@ typedef struct GNode {
 	   addition=false;
 	   deletion=false;
 	   children = 0;
-	   numOfNodes = 0;
 	   start = 0;
    }
 } GNode;
@@ -188,7 +186,8 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 					// Reading the children of the current node in the queue
 					const Node start = FGraph[currentFather].start;
-					for(unsigned int j=0; j < FGraph[currentFather].numOfNodes; j++){
+					const unsigned int size = FGraph[currentFather+1].start - start;
+					for(unsigned int j=0; j < size; j++){
 						const Node currentChild = Nodes[start+j];
 						if(visited[currentChild] < visitedCounter){	// Explored by the other side
 							visited[currentChild] = visitedCounter;
@@ -205,7 +204,8 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 				}else{		// Deletion == 1
 					// We have to check at every child if it was deleted
 					const Node start = FGraph[currentFather].start;
-					for(unsigned int j=0; j < FGraph[currentFather].numOfNodes; j++){
+					const unsigned int size = FGraph[currentFather+1].start - start;
+					for(unsigned int j=0; j < size; j++){
 						const Node currentChild = Nodes[start+j];
 
 						// Check if the node was deleted
@@ -320,7 +320,8 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 
 					// Reading the children of the current node in the queue
 					const Node start = BGraph[currentFather].start;
-					for(unsigned int j=0; j < BGraph[currentFather].numOfNodes; j++){
+					const unsigned int size = BGraph[currentFather+1].start - start;
+					for(unsigned int j=0; j < size; j++){
 						const Node currentChild = Nodes[start+j];
 						if(visited[currentChild] < visitedCounter){	// Explored by the other side
 							visited[currentChild] = visitedCounter + 1;
@@ -337,7 +338,8 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 				}else{		// Deletion == 1
 					// We have to check at every child if it was deleted
 					const Node start = BGraph[currentFather].start;
-					for(unsigned int j=0; j < BGraph[currentFather].numOfNodes; j++){
+					const unsigned int size = BGraph[currentFather+1].start - start;
+					for(unsigned int j=0; j < size; j++){
 						const Node currentChild = Nodes[start+j];
 
 						// Check if the node was deleted
@@ -529,17 +531,12 @@ void preprocess4(){
 		sumNeighbours = ForwardG[i].children;
 
 		unsigned int start1 = ForwardG[i].start;
-		for(unsigned int j=0; j < ForwardG[i].numOfNodes; j++){
-
-			sumNeighbours += ForwardG[Nodes[start1+j]].children;
-			unsigned int start2 = ForwardG[Nodes[start1+j]].start;
-			for(unsigned int k=0; k < ForwardG[Nodes[start2]].numOfNodes; k++){
-
+		unsigned int size = ForwardG[i+1].start - start1;
+		for(unsigned int j=0; j < size; j++){
+			if(ForwardG[Nodes[start1+j]].children){
 				neighbours5 = true;
 				break;
 			}
-			if(neighbours5)
-				break;
 		}
 
 		if(neighbours5 || sumNeighbours > TOTALNODES)
@@ -559,16 +556,12 @@ void preprocess5(){
 		sumNeighbours = BackwardG[i].children;
 
 		unsigned int start1 = BackwardG[i].start;
-		for(unsigned int j=0; j < BackwardG[i].numOfNodes; j++){
-
-			sumNeighbours += BackwardG[Nodes[start1+j]].children;
-			unsigned int start2 = BackwardG[Nodes[start1+j]].start;
-			for(unsigned int k=0; k < BackwardG[Nodes[start2]].numOfNodes; k++){
+		unsigned int size = BackwardG[i+1].start - start1;
+		for(unsigned int j=0; j < size; j++){
+			if(BackwardG[Nodes[start1+j]].children){
 				neighbours5 = true;
 				break;
 			}
-			if(neighbours5)
-				break;
 		}
 
 		if(neighbours5 || sumNeighbours > TOTALNODES)
@@ -635,6 +628,7 @@ int main() {
 	unsigned int initialNameCounter = nameChangeCounter;
 
 	Nodes.reserve(counter*2);
+
 	evaluationF = (bool *)calloc(nameChangeCounter,sizeof(bool));
 	evaluationB = (bool *)calloc(nameChangeCounter,sizeof(bool));
 
@@ -642,24 +636,25 @@ int main() {
 	preprocess2();			// Count children
 
 	// Create the new Graph
-		unsigned int nodes_ptr = 0;
-		for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
-			unsigned int size = ForwardGraph[cur_n].nodes.size();
-			ForwardG[cur_n].start = nodes_ptr;
-			ForwardG[cur_n].children = ForwardGraph[cur_n].children;;
-			ForwardG[cur_n].numOfNodes = size;
-			for(unsigned int child=0; child < size; child++, nodes_ptr++)
-				Nodes.push_back(ForwardGraph[cur_n].nodes[child]);
-		}
+	unsigned int nodes_ptr = 0;
+	for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
+		unsigned int size = ForwardGraph[cur_n].nodes.size();
+		ForwardG[cur_n].start = nodes_ptr;
+		ForwardG[cur_n].children = ForwardGraph[cur_n].children;;
+		for(unsigned int child=0; child < size; child++, nodes_ptr++)
+			Nodes.push_back(ForwardGraph[cur_n].nodes[child]);
+	}
+	ForwardG[nameChangeCounter].start = nodes_ptr;
 
-		for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
-			unsigned int size = BackwardGraph[cur_n].nodes.size();
-			BackwardG[cur_n].start = nodes_ptr;
-			BackwardG[cur_n].children = BackwardGraph[cur_n].children;;
-			BackwardG[cur_n].numOfNodes = size;
-			for(unsigned int child=0; child < size; child++, nodes_ptr++)
-				Nodes.push_back(BackwardGraph[cur_n].nodes[child]);
-		}
+	for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
+		unsigned int size = BackwardGraph[cur_n].nodes.size();
+		BackwardG[cur_n].start = nodes_ptr;
+		BackwardG[cur_n].children = BackwardGraph[cur_n].children;;
+		for(unsigned int child=0; child < size; child++, nodes_ptr++)
+			Nodes.push_back(BackwardGraph[cur_n].nodes[child]);
+	}
+	BackwardG[nameChangeCounter].start = nodes_ptr;
+
 
 	preprocess4();
 	preprocess5();
@@ -681,7 +676,11 @@ int main() {
 
 	cout << "R" << endl << flush;
 
-	sleep(1);
+	if(counter >5500000 && counter < 5600000)
+		sleep(2);
+
+	if(counter > 10000000)
+		sleep(1);
 
 	cin.clear();
 	cin >> c;
