@@ -116,15 +116,6 @@ void initThread(){
 	//cerr << "Thread id " <<  pthread_self() << " -> "<< threadCounter << endl;
 	threadIds.emplace(pthread_self(), threadCounter);
 
-	 /*cpu_set_t cpuset;
-	 CPU_ZERO(&cpuset);
-	 CPU_SET(threadCounter, &cpuset);
-
-	 int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-	 if (rc != 0)
-		 std::cerr << "Error calling pthread_setaffinity_np: " << rc << "\n";*/
-
-
 	threadCounter++;
 	mtx.unlock();
 
@@ -160,8 +151,10 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 	Node *bNextQueue_iter;
 
 
-	if(visitedCounter_global[thread_id] == 65534)
+	if(visitedCounter_global[thread_id] == 65534){
+		visitedCounter_global[thread_id] = 0;
 		memset(visited, 0, MAXN);
+	}
 
 	visitedCounter_global[thread_id] += 2;
 	const unsigned int visitedCounter = visitedCounter_global[thread_id];
@@ -495,8 +488,10 @@ void shortest_path_fast(Node tempa, Node tempb, int localVersion, int resultsCou
 	Node *bFrontQueue = bQueue_global[thread_id][0];
 	Node *bNextQueue = bQueue_global[thread_id][1];
 
-	if(visitedCounter_global[thread_id] == 65534)
+	if(visitedCounter_global[thread_id] == 65534){
+		visitedCounter_global[thread_id] = 0;
 		memset(visited, 0, MAXN);
+	}
 
 	visitedCounter_global[thread_id] += 2;
 	const unsigned int visitedCounter = visitedCounter_global[thread_id];
