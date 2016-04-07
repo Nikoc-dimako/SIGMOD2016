@@ -9,7 +9,7 @@
 
 #include "threadpool11/threadpool11.hpp"
 
-// #include <fstream>
+//#include <fstream>
 
 
 using namespace std;
@@ -37,13 +37,16 @@ typedef struct GraphNode {
 // Try without children
 typedef struct GNode {
 	unsigned int start;
-	unsigned int children;
+	unsigned int children	: 30,
+				 addition	: 1,
+				 deletion	: 1;
+	/*unsigned int children;
 	bool addition;
-	bool deletion;
+	bool deletion;*/
 
    GNode(){
-	   addition=false;
-	   deletion=false;
+	   addition = 0;
+	   deletion = 0;
 	   children = 0;
 	   start = 0;
    }
@@ -149,11 +152,13 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 	visitedCounter_global[thread_id] += 2;
 	const unsigned int visitedCounter = visitedCounter_global[thread_id];
 
+	const GNode *const FGraph = ForwardG;
+	const GNode *const BGraph = BackwardG;
 
 	// Initialize Queues and Variables
-	unsigned int fChildrenCount = ForwardGraph[a].nodes.size();
+	unsigned int fChildrenCount = FGraph[a+1].start - FGraph[a].start;
 	unsigned int fCurrentNodes = 1;
-	unsigned int bChildrenCount = BackwardGraph[b].nodes.size();
+	unsigned int bChildrenCount = BGraph[b+1].start - BGraph[b].start;
 	unsigned int bCurrentNodes = 1;
 
 	fFrontQueue[0] = a;
@@ -169,9 +174,6 @@ void shortest_path(Node tempa, Node tempb, int localVersion, int resultsCounter)
 	// The children counters contain the number of children that the already explored nodes have.
 
 	// Main Loop
-	const GNode *const FGraph = ForwardG;
-	const GNode *const BGraph = BackwardG;
-
 	while(1){
 		//unsigned int iterator = 0;
 
@@ -580,6 +582,16 @@ void preprocess5(){
 	}
 }
 
+unsigned int getMaxNeighbor(){
+	unsigned int max = 0;
+	for(unsigned int i=1; i<nameChangeCounter; i++)
+		max = (max>ForwardGraph[i].nodes.size())? max : ForwardGraph[i].nodes.size();
+
+	for(unsigned int i=1; i<nameChangeCounter; i++)
+		max = (max>BackwardGraph[i].nodes.size())? max : BackwardGraph[i].nodes.size();
+
+	return max;
+}
 
 int main() {
 	ios_base::sync_with_stdio(false);
@@ -644,110 +656,126 @@ int main() {
 	preprocess();			// Sorting the biggest Nodes to the front of the lists
 	preprocess2();			// Count children
 
-	// Create the new Graph
-	unsigned int nodes_ptr = 0;
-	for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
-		unsigned int size = ForwardGraph[cur_n].nodes.size();
-		ForwardG[cur_n].start = nodes_ptr;
-		ForwardG[cur_n].children = ForwardGraph[cur_n].children;;
-		for(unsigned int child=0; child < size; child++, nodes_ptr++)
-			Nodes.push_back(ForwardGraph[cur_n].nodes[child]);
-	}
-	ForwardG[nameChangeCounter].start = nodes_ptr;
 
-	for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
-		unsigned int size = BackwardGraph[cur_n].nodes.size();
-		BackwardG[cur_n].start = nodes_ptr;
-		BackwardG[cur_n].children = BackwardGraph[cur_n].children;;
-		for(unsigned int child=0; child < size; child++, nodes_ptr++)
-			Nodes.push_back(BackwardGraph[cur_n].nodes[child]);
-	}
-	BackwardG[nameChangeCounter].start = nodes_ptr;
+	unsigned int maxNeighbors = getMaxNeighbor();
+	unsigned int averageNeighbors = (int)(counter)/nameChangeCounter;
 
+	bool star = false;
+	if((nameChangeCounter/1000)*maxNeighbors > counter)
+		star = true;
 
-	preprocess4();
-	preprocess5();
+	//cerr << star << endl;
 
-	// Creating Threads
-	threadpool11::Pool query_pool;
-	query_pool.setWorkerCount(NUMOFTHREADS-1);
+//	if(star){
 
-	for(int i=0; i<NUMOFTHREADS-1; i++)
-		query_pool.postWork<void>(initThread);
-	initThread();
-	query_pool.waitAll();
+//	}else{
+		// Create the new Graph
+		unsigned int nodes_ptr = 0;
+		for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
+			unsigned int size = ForwardGraph[cur_n].nodes.size();
+			ForwardG[cur_n].start = nodes_ptr;
+			ForwardG[cur_n].children = ForwardGraph[cur_n].children;;
+			for(unsigned int child=0; child < size; child++, nodes_ptr++)
+				Nodes.push_back(ForwardGraph[cur_n].nodes[child]);
+		}
+		ForwardG[nameChangeCounter].start = nodes_ptr;
 
-	// Main Thread Queue
-	vector<SP_Params> parameters;
-	parameters.reserve(20000);
+		for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
+			unsigned int size = BackwardGraph[cur_n].nodes.size();
+			BackwardG[cur_n].start = nodes_ptr;
+			BackwardG[cur_n].children = BackwardGraph[cur_n].children;;
+			for(unsigned int child=0; child < size; child++, nodes_ptr++)
+				Nodes.push_back(BackwardGraph[cur_n].nodes[child]);
+		}
+		BackwardG[nameChangeCounter].start = nodes_ptr;
 
-	SP_Params params;
+		preprocess4();
+		preprocess5();
 
-	cout << "R" << endl << flush;
+		free(ForwardGraph);
+		free(BackwardGraph);
 
-	if(counter >5500000 && counter < 5600000)
-		sleep(2);
+		// Creating Threads
+		threadpool11::Pool query_pool;
+		query_pool.setWorkerCount(NUMOFTHREADS-1);
 
-	if(counter > 10000000)
-		sleep(1);
+		for(int i=0; i<NUMOFTHREADS-1; i++)
+			query_pool.postWork<void>(initThread);
+		initThread();
+		query_pool.waitAll();
 
-	cin.clear();
-	cin >> c;
+		// Main Thread Queue
+		vector<SP_Params> parameters;
+		parameters.reserve(20000);
 
-	while(cin >> c) {
-		if(c == 'F') {
-			// Run your shortest paths
-			for(vector<SP_Params>::iterator it=parameters.begin(); it!=parameters.end(); it++)
-				shortest_path(it->a, it->b, it->versionCounter, it->resultsCounter);
-			parameters.clear();
-			query_pool.waitAll();
-			// Print the results
-			for(int i=0; i<resultsCounter; i++)
-				cout << results[i] << endl;
+		SP_Params params;
 
-			cout << flush;
-			cin.clear();
+		cout << "R" << endl << flush;
 
-			resultsCounter = 0;
+		if(counter >5500000 && counter < 5600000)
+			sleep(2);
 
-			continue;
+		if(counter > 10000000)
+			sleep(1);
+
+		cin.clear();
+		cin >> c;
+
+		while(cin >> c) {
+			if(c == 'F') {
+				// Run your shortest paths
+				for(vector<SP_Params>::iterator it=parameters.begin(); it!=parameters.end(); it++)
+					shortest_path(it->a, it->b, it->versionCounter, it->resultsCounter);
+				parameters.clear();
+				query_pool.waitAll();
+				// Print the results
+				for(int i=0; i<resultsCounter; i++)
+					cout << results[i] << endl;
+
+				cout << flush;
+				cin.clear();
+
+				resultsCounter = 0;
+
+				continue;
+			}
+
+			cin >> a >> b;
+
+			if(c == 'Q'){
+				if((nameChange[a]<initialNameCounter && evaluationF[nameChange[a]] && !ForwardG[nameChange[a]].addition)
+					|| (nameChange[b]<initialNameCounter && evaluationB[nameChange[b]] && !BackwardG[nameChange[b]].addition)){
+					params.a = a;
+					params.b = b;
+					params.versionCounter = versionCounter;
+					params.resultsCounter = resultsCounter;
+					parameters.push_back(params);
+					//shortest_path(a, b, versionCounter, resultsCounter);
+				}else
+					query_pool.postWork<void>([a, b, versionCounter, resultsCounter] {  shortest_path(a, b, versionCounter, resultsCounter);  });
+
+				versionCounter++;
+				resultsCounter++;
+
+			}else if(c == 'A'){
+				if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
+				if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
+
+				add_edge(nameChange[a], nameChange[b], versionCounter);
+
+				versionCounter++;
+
+			}else{
+				if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
+				if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
+
+				delete_edge(nameChange[a], nameChange[b], versionCounter);
+
+				versionCounter++;
+			}
 		}
 
-		cin >> a >> b;
-
-		if(c == 'Q'){
-			if((nameChange[a]<initialNameCounter && evaluationF[nameChange[a]] && !ForwardG[nameChange[a]].addition)
-				|| (nameChange[b]<initialNameCounter && evaluationB[nameChange[b]] && !BackwardG[nameChange[b]].addition)){
-				params.a = a;
-				params.b = b;
-				params.versionCounter = versionCounter;
-				params.resultsCounter = resultsCounter;
-				parameters.push_back(params);
-				//shortest_path(a, b, versionCounter, resultsCounter);
-			}else
-				query_pool.postWork<void>([a, b, versionCounter, resultsCounter] {  shortest_path(a, b, versionCounter, resultsCounter);  });
-
-			versionCounter++;
-			resultsCounter++;
-
-		}else if(c == 'A'){
-			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
-			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-
-			add_edge(nameChange[a], nameChange[b], versionCounter);
-
-			versionCounter++;
-
-		}else{
-			if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
-			if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-
-			delete_edge(nameChange[a], nameChange[b], versionCounter);
-
-			versionCounter++;
-		}
-	}
-
-	return 0;
+		return 0;
+//	}
 }
 
