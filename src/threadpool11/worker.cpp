@@ -22,8 +22,6 @@ This file is part of threadpool11.
 #include "pool.hpp"
 #include "worker.hpp"
 
-#include <boost/lockfree/queue.hpp>
-
 
 namespace threadpool11 {
 

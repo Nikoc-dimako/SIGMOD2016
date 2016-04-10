@@ -6,25 +6,56 @@
 #include <algorithm>
 #include <unordered_map>
 #include <string.h>
+#include <queue>
+#include <pthread.h>
+#include <set>
+#include <limits.h>
+
+#include <omp.h>
 
 #include "threadpool11/threadpool11.hpp"
 
-//#include <fstream>
-
+// #include <fstream>
 
 using namespace std;
 using namespace __gnu_cxx;
 
-#define NUMOFTHREADS 24
+// One of the threads will be the master thread
+#define NUMOFTHREADS 25
 
+// Size of the node arrays
 #define MAXN ((size_t)1<<26)
-#define NAMECHANGESIZE ((size_t)1<<28)
 
-#define TOTALNODES 50
+// Max value of the node number
+#define NAMECHANGESIZE ((size_t)1<<28)		// INT_MAX
 
+// Values for the proprocess to find quick queries
+#define TOTALNODES 5
+#define MAXDEPTH 5
+
+/*
+ * This is the factor to decide if a  graph is a star or not
+ * In order to be a star the graph must have:
+ * averageNeighbors*STARFACTOR < maxNeighbors
+ * where maxNeighbors is the most neighbors a node has.
+ */
+#define STARFACTOR 5000
+
+/*
+ * If nodes/MERGEFACTOR > totalDeletes then merge
+ */
+#define MERGEFACTOR 10
+
+// Type of a node
 typedef unsigned int Node;
+
+/* Visitor is used to save a state of a Node. Visited or not.
+ * This value is not cleaned at every query so the value must increase.
+ * The max number of queries before reset is the value of Visitor/2.
+ */
 typedef unsigned short int Visitor;
 
+// This type of node is used for preprocessing
 typedef struct GraphNode {
    vector<Node> nodes;
    int children;
@@ -34,42 +65,43 @@ typedef struct GraphNode {
    }
 } GraphNode;
 
+// This type of node is used for star type Graphs where we need the children for predictability
 typedef struct StarGNode {
 	unsigned int start;
-	unsigned int addition	: 1,
-				 deletion	: 1,
-				 children	: 30;
-	/*unsigned int children;
-	bool addition;
-	bool deletion;*/
+	unsigned int children	: 30,
+				 addition	: 1,
+				 deletion	: 1;
 
    StarGNode(){
+	   start = 0;
 	   addition = 0;
 	   deletion = 0;
 	   children = 0;
-	   start = 0;
    }
 } StarGNode;
 
+// This type of node is at graphs where there is not a big variation in the number of neighbors
+// We have better memory locality using this type of node
 typedef struct FastGNode {
-	unsigned int addition	: 1,
-				 deletion	: 1,
-				 start	: 30;
+	unsigned int start	: 30,
+				 addition	: 1,
+				 deletion	: 1;
    FastGNode(){
+	   start = 0;
 	   addition=false;
 	   deletion=false;
-	   start = 0;
    }
 } FastGNode;
 
 
-
+// Struct used to save the query parameters, in order to enqueue the queries
 typedef struct SP_Params{
 	unsigned int a;
 	unsigned int b;
 	unsigned int versionCounter;
 	unsigned int resultsCounter;
 } SP_Params;
+
 
 struct MyPair{
 	Node b;
@@ -93,6 +125,8 @@ Node ***fQueue_global;
 Node ***bQueue_global;
 Visitor *visitedCounter_global;
 
+threadpool11::Pool query_pool;
+
 
 //Variables for the node's nameChange
 Node *nameChange;
@@ -100,6 +134,7 @@ Node *nameReorder;
 Node *nameChangeNewPositions;	// This array will hold the positions of the node's new position
 Node *nodePositions;			// This array holds the value that is in this position
 unsigned int nameChangeCounter = 1;
+unsigned int initialNodes;
 
 
 // Variables for the multiversion
@@ -110,10 +145,26 @@ int threadCounter = 0;
 unordered_map <pthread_t, int> threadIds;
 mutex mtx;
 
+class Mycomparison
+{
+  bool reverse;
+public:
+  bool operator() (const SP_Params& q1, const SP_Params& q2) const
+  {
+	  int q1smaller = ForwardGraph[nameChange[q1.a]].children > BackwardGraph[nameChange[q1.b]].children ? nameChange[q1.a] : nameChange[q1.b];
+	  int q2smaller = ForwardGraph[nameChange[q2.a]].children > BackwardGraph[nameChange[q2.b]].children ? nameChange[q2.a] : nameChange[q2.b];
+	  return q1smaller > q2smaller;
+  }
+};
+
+
+/*
+ * This function is run at the beginning from every thread to link it with a number from 0 to NUMOFTHREADS
+ * The thread will use that number to run it's jobs to the proper structs
+ */
 void initThread(){
 	mtx.lock();
 	unordered_map<pthread_t, int>::const_iterator um_it = threadIds.find(pthread_self());
-	//cerr << "Thread id " <<  pthread_self() << " -> "<< threadCounter << endl;
 	threadIds.emplace(pthread_self(), threadCounter);
 
 	threadCounter++;
@@ -122,8 +173,9 @@ void initThread(){
 	sleep(1);
 }
 
+
 void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCounter) {
-	int thread_id = threadIds.find(pthread_self())->second;
+	// Maybe the query is for a node that doesn't exist
 	if(nameChange[tempa] == 0 || nameChange[tempb] == 0){
 		if(tempa != tempb)
 			results[resultsCounter] = -1;
@@ -140,7 +192,8 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 		return;
 	}
 
-
+	// Get the proper structs to run the query on
+	int thread_id = threadIds.find(pthread_self())->second;
 	Visitor *visited = visited_global[thread_id];
 	Node *fFrontQueue = fQueue_global[thread_id][0];
 	Node *fNextQueue = fQueue_global[thread_id][1];
@@ -150,19 +203,23 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 	Node *bNextQueue = bQueue_global[thread_id][1];
 	Node *bNextQueue_iter;
 
-
+	// If a thread completed a lot of queries maybe a reset is needed at the visited array
 	if(visitedCounter_global[thread_id] == 65534){
 		visitedCounter_global[thread_id] = 0;
 		memset(visited, 0, MAXN);
 	}
 
+	/*
+	 * In order not to reset the visited array at every query we have a number to represent 0
+	 * We increase that number at every query, so we don't need to reset the array
+	 */
 	visitedCounter_global[thread_id] += 2;
 	const unsigned int visitedCounter = visitedCounter_global[thread_id];
 
 	const StarGNode *const FGraph = StarForwardG;
 	const StarGNode *const BGraph = StarBackwardG;
 
-	// Initialize Queues and Variables
+	// Initializing Queues and Variables
 	unsigned int fChildrenCount = FGraph[a+1].start - FGraph[a].start;
 	unsigned int fCurrentNodes = 1;
 	unsigned int bChildrenCount = BGraph[b+1].start - BGraph[b].start;
@@ -177,12 +234,11 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 	visited[a] = visitedCounter;
 	visited[b] = visitedCounter+1;
 
-	// The queue saves the currently explore1d nodes
+	// The queue saves the currently explored nodes
 	// The children counters contain the number of children that the already explored nodes have.
 
 	// Main Loop
 	while(1){
-		//unsigned int iterator = 0;
 
 		if(fChildrenCount <= bChildrenCount){	// Move forward, there are less children there
 			fChildrenCount = 0;
@@ -205,7 +261,6 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 							visited[currentChild] = visitedCounter;
 							*fNextQueue_iter = currentChild;
 							fNextQueue_iter++;
-							//iterator++;
 						}
 						else{
 							if(visited[currentChild] == visitedCounter+1){ 	// Found the minimum distance!
@@ -237,7 +292,6 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 							visited[currentChild] = visitedCounter;
 							*fNextQueue_iter = currentChild;
 							fNextQueue_iter++;
-							//iterator++;
 						}
 						else{
 							if(visited[currentChild] == visitedCounter+1){ 	// Found the minimum distance!
@@ -251,6 +305,10 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 
 				// Check if there were any additions in the current father node
 				if(FGraph[currentFather].addition == 1){
+					if(thread_id==0){
+						query_pool.postWork<void>([tempa, tempb, localVersion, resultsCounter] {  shortest_path_star(tempa, tempb, localVersion, resultsCounter);  });
+						return;
+					}
 					// For every node added
 					if(FGraph[currentFather].deletion == 0){
 						for(std::vector<MyPair> ::iterator it=Forward_add[currentFather].begin(); it!=Forward_add[currentFather].end(); it++){
@@ -266,7 +324,6 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 								visited[child]=visitedCounter;
 								*fNextQueue_iter = child;
 								fNextQueue_iter++;
-								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter+1){ 	// Found the minimum distance!
@@ -299,7 +356,6 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 								visited[child]=visitedCounter;
 								*fNextQueue_iter = child;
 								fNextQueue_iter++;
-								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter+1){ 	// Found the minimum distance!
@@ -374,7 +430,6 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 							visited[currentChild] = visitedCounter + 1;
 							*bNextQueue_iter = currentChild;
 							bNextQueue_iter++;
-							//iterator++;
 						}
 						else{
 							if(visited[currentChild] == visitedCounter){ 	// Found the minimum distance!
@@ -388,6 +443,10 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 
 				// Check if there were any additions in the current father node
 				if(BGraph[currentFather].addition == 1){
+					if(thread_id==0){
+						query_pool.postWork<void>([tempa, tempb, localVersion, resultsCounter] {  shortest_path_star(tempa, tempb, localVersion, resultsCounter);  });
+						return;
+					}
 					// For every node added
 					if(BGraph[currentFather].deletion == 0){
 						for(std::vector<MyPair> ::iterator it=Backward_add[currentFather].begin(); it!=Backward_add[currentFather].end(); it++){
@@ -403,7 +462,6 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 								visited[child]=visitedCounter + 1;
 								*bNextQueue_iter = child;
 								bNextQueue_iter++;
-								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter){ 	// Found the minimum distance!
@@ -436,7 +494,6 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 								visited[child]=visitedCounter + 1;
 								*bNextQueue_iter = child;
 								bNextQueue_iter++;
-								//iterator++;
 							}
 							else{
 								if(visited[child] == visitedCounter){ 	// Found the minimum distance!
@@ -463,7 +520,7 @@ void shortest_path_star(Node tempa, Node tempb, int localVersion, int resultsCou
 
 
 void shortest_path_fast(Node tempa, Node tempb, int localVersion, int resultsCounter) {
-	int thread_id = threadIds.find(pthread_self())->second;
+	// Maybe the query is for a node that doesn't exist
 	if(nameChange[tempa] == 0 || nameChange[tempb] == 0){
 		if(tempa != tempb)
 			results[resultsCounter] = -1;
@@ -480,7 +537,8 @@ void shortest_path_fast(Node tempa, Node tempb, int localVersion, int resultsCou
 		return;
 	}
 
-
+	// Get the proper structs to run the query on
+	int thread_id = threadIds.find(pthread_self())->second;
 	Visitor *visited = visited_global[thread_id];
 	Node *fFrontQueue = fQueue_global[thread_id][0];
 	Node *fNextQueue = fQueue_global[thread_id][1];
@@ -488,11 +546,16 @@ void shortest_path_fast(Node tempa, Node tempb, int localVersion, int resultsCou
 	Node *bFrontQueue = bQueue_global[thread_id][0];
 	Node *bNextQueue = bQueue_global[thread_id][1];
 
+	// If a thread completed a lot of queries maybe a reset is needed at the visited array
 	if(visitedCounter_global[thread_id] == 65534){
 		visitedCounter_global[thread_id] = 0;
 		memset(visited, 0, MAXN);
 	}
 
+	/*
+	 * In order not to reset the visited array at every query we have a number to represent 0
+	 * We increase that number at every query, so we don't need to reset the array
+	 */
 	visitedCounter_global[thread_id] += 2;
 	const unsigned int visitedCounter = visitedCounter_global[thread_id];
 
@@ -894,55 +957,96 @@ void preprocess2() {
 
 bool *evaluationF,*evaluationB;
 
+bool neighbours5;
+bool totalNodes5;
+set<int> visited;
+int sumNodes;
+
+void dfs4(int x, int depth) {
+
+    visited.insert(x);
+    sumNodes++;
+
+    if(depth > MAXDEPTH) {
+        neighbours5 = true;
+        return;
+    }
+
+    if(sumNodes > TOTALNODES) {
+        totalNodes5 = true;
+        return;
+    }
+
+    unsigned int size = ForwardGraph[x].nodes.size();
+    for(unsigned int i=0;i<size;i++) {
+        if(visited.find(ForwardGraph[x].nodes[i]) != visited.end()) continue;
+
+        dfs4(ForwardGraph[x].nodes[i], depth+1);
+        if(neighbours5 || totalNodes5) return;
+    }
+}
+
 void preprocess4(){
-	int sumNeighbours;
-	bool neighbours5;
+
 	evaluationF[0] = false;
 
 	for(unsigned int i=1; i<nameChangeCounter; i++){
+        totalNodes5 = false;
 		neighbours5 = false;
-		sumNeighbours = ForwardGraph[i].children;
+        sumNodes = 0;
+        visited.clear();
 
-		vector<Node> &start1 = ForwardGraph[i].nodes;
-		unsigned int size = ForwardGraph[i].nodes.size();
-		for(unsigned int j=0; j < size; j++){
-			if(ForwardGraph[start1[j]].children){
-				neighbours5 = true;
-				break;
-			}
-		}
+        dfs4(i,0);
 
-		if(neighbours5 || sumNeighbours > TOTALNODES)
+		if(neighbours5 || totalNodes5)
 			evaluationF[i] = false;
 		else
 			evaluationF[i] = true;
 	}
 }
+void dfs5(int x, int depth) {
+
+    visited.insert(x);
+    sumNodes++;
+
+    if(depth > MAXDEPTH) {
+        neighbours5 = true;
+        return;
+    }
+
+    if(sumNodes > TOTALNODES) {
+        totalNodes5 = true;
+        return;
+    }
+
+    unsigned int size = BackwardGraph[x].nodes.size();
+    for(unsigned int i=0;i<size;i++) {
+        if(visited.find(BackwardGraph[x].nodes[i]) != visited.end()) continue;
+
+        dfs5(BackwardGraph[x].nodes[i], depth+1);
+        if(neighbours5 || totalNodes5) return;
+    }
+}
 
 void preprocess5(){
-	int sumNeighbours;
-	bool neighbours5;
+
 	evaluationB[0] = false;
 
 	for(unsigned int i=1; i<nameChangeCounter; i++){
+        totalNodes5 = false;
 		neighbours5 = false;
-		sumNeighbours = BackwardGraph[i].children;
+        sumNodes = 0;
+        visited.clear();
 
-		vector<Node> &start1 = BackwardGraph[i].nodes;
-		unsigned int size = BackwardGraph[i].nodes.size();
-		for(unsigned int j=0; j < size; j++){
-			if(BackwardGraph[start1[j]].children){
-				neighbours5 = true;
-				break;
-			}
-		}
+        dfs5(i,0);
 
-		if(neighbours5 || sumNeighbours > TOTALNODES)
+		if(neighbours5 || totalNodes5)
 			evaluationB[i] = false;
 		else
 			evaluationB[i] = true;
 	}
 }
+
 
 unsigned int getMaxNeighbor(){
 	unsigned int max = 0;
@@ -955,15 +1059,223 @@ unsigned int getMaxNeighbor(){
 	return max;
 }
 
-/*void merge_star(){
-	for(unsigned int i=0; i<nameChangeCounter; i++){
-		if(StarForwardG[i].deletion && StarForwardG[i].addition){
-			unsigned int
+void merge_stargraph(){
+	// Forward Graph
+#pragma omp for schedule(static)
+	for(unsigned int node=0; node<initialNodes; node++){
+		// Delete the proper nodes
+		const unsigned int end = StarForwardG[node+1].start;
+		for(unsigned int child=StarForwardG[node].start; child < end; child++){
+			const Node currentChild = Nodes[child];
 
-
+			for(unsigned int del_node=0; del_node < Forward_del[node].size(); del_node++)
+				if(Forward_del[node][del_node].b == currentChild){
+					StarForwardG[node].children -= StarForwardG[child+1].start - StarForwardG[child].start;
+					Nodes[child] = 0;
+					break;
+				}
 		}
+
+		// Remove additions that were deleted
+		for(unsigned int add_node=0; add_node < Forward_add[node].size(); add_node++){
+			Node current_add = Forward_add[node][add_node].b;
+			int add_version = Forward_add[node][add_node].version;
+
+			for(unsigned int del_node=0; del_node < Forward_del[node].size(); del_node++)
+				if(Forward_del[node][del_node].b == current_add && Forward_del[node][del_node].version > add_version){
+					Forward_add[node].erase(  Forward_add[node].begin()+add_node );
+					add_node--;
+					break;
+				}
+		}
+
+		// Add additions to the graph if there is empty space
+		bool allAdded = false;
+		for(unsigned int add_node=0; add_node < Forward_add[node].size(); add_node++){
+			Node current_add = Forward_add[node][add_node].b;
+			allAdded = false;
+
+			for(unsigned int child=StarForwardG[node].start; child < end; child++){
+				if(Nodes[child] == 0){
+					allAdded = true;
+					StarForwardG[child].children += StarForwardG[child+1].start - StarForwardG[child].start;
+					Nodes[child] = current_add;
+					break;
+				}
+			}
+
+			// If we get here, there are no more empty nodes to insert an element
+			if(allAdded == false)
+				break;
+		}
+
+		StarForwardG[node].deletion = false;
+		if(allAdded)
+			StarForwardG[node].addition = false;
 	}
-}*/
+
+
+	// Backward Graph
+#pragma omp for schedule(static)
+	for(unsigned int node=0; node<initialNodes; node++){
+		// Delete the proper nodes
+		const unsigned int end = StarBackwardG[node+1].start;
+		for(unsigned int child=StarBackwardG[node].start; child < end; child++){
+			const Node currentChild = Nodes[child];
+
+			for(unsigned int del_node=0; del_node < Backward_del[node].size(); del_node++)
+				if(Backward_del[node][del_node].b == currentChild){
+					StarBackwardG[node].children -= StarBackwardG[child+1].start - StarBackwardG[child].start;
+					Nodes[child] = 0;
+					break;
+				}
+		}
+
+		// Remove additions that were deleted
+		for(unsigned int add_node=0; add_node < Backward_add[node].size(); add_node++){
+			Node current_add = Backward_add[node][add_node].b;
+			int add_version = Backward_add[node][add_node].version;
+
+			for(unsigned int del_node=0; del_node < Backward_del[node].size(); del_node++)
+				if(Backward_del[node][del_node].b == current_add && Backward_del[node][del_node].version > add_version){
+					Backward_add[node].erase(  Backward_add[node].begin()+add_node );
+					add_node--;
+					break;
+				}
+		}
+
+		// Add additions to the graph if there is empty space
+		bool allAdded = false;
+		for(unsigned int add_node=0; add_node < Backward_add[node].size(); add_node++){
+			Node current_add = Backward_add[node][add_node].b;
+			allAdded = false;
+
+			for(unsigned int child=StarBackwardG[node].start; child < end; child++){
+				if(Nodes[child] == 0){
+					allAdded = true;
+					StarBackwardG[child].children += StarBackwardG[child+1].start - StarBackwardG[child].start;
+					Nodes[child] = current_add;
+					break;
+				}
+			}
+
+			// If we get here, there are no more empty nodes to insert an element
+			if(allAdded == false)
+				break;
+		}
+
+		StarBackwardG[node].deletion = false;
+		if(allAdded)
+			StarBackwardG[node].addition = false;
+	}
+}
+
+void merge_fastgraph(){
+	// Forward Graph
+#pragma omp for schedule(static)
+	for(unsigned int node=0; node<initialNodes; node++){
+		// Delete the proper nodes
+		const unsigned int end = FastForwardG[node+1].start;
+		for(unsigned int child=FastForwardG[node].start; child < end; child++){
+			const Node currentChild = Nodes[child];
+
+			for(unsigned int del_node=0; del_node < Forward_del[node].size(); del_node++)
+				if(Forward_del[node][del_node].b == currentChild){
+					Nodes[child] = 0;
+					break;
+				}
+		}
+
+		// Remove additions that were deleted
+		for(unsigned int add_node=0; add_node < Forward_add[node].size(); add_node++){
+			Node current_add = Forward_add[node][add_node].b;
+			int add_version = Forward_add[node][add_node].version;
+
+			for(unsigned int del_node=0; del_node < Forward_del[node].size(); del_node++)
+				if(Forward_del[node][del_node].b == current_add && Forward_del[node][del_node].version > add_version){
+					Forward_add[node].erase(  Forward_add[node].begin()+add_node );
+					add_node--;
+					break;
+				}
+		}
+
+		// Add additions to the graph if there is empty space
+		bool allAdded = false;
+		for(unsigned int add_node=0; add_node < Forward_add[node].size(); add_node++){
+			Node current_add = Forward_add[node][add_node].b;
+			allAdded = false;
+
+			for(unsigned int child=FastForwardG[node].start; child < end; child++){
+				if(Nodes[child] == 0){
+					allAdded = true;
+					Nodes[child] = current_add;
+					break;
+				}
+			}
+
+			// If we get here, there are no more empty nodes to insert an element
+			if(allAdded == false)
+				break;
+		}
+
+		FastForwardG[node].deletion = false;
+		if(allAdded)
+			FastForwardG[node].addition = false;
+	}
+
+
+	// Backward Graph
+#pragma omp for schedule(static)
+	for(unsigned int node=0; node<initialNodes; node++){
+		// Delete the proper nodes
+		const unsigned int end = FastBackwardG[node+1].start;
+		for(unsigned int child=FastBackwardG[node].start; child < end; child++){
+			const Node currentChild = Nodes[child];
+
+			for(unsigned int del_node=0; del_node < Backward_del[node].size(); del_node++)
+				if(Backward_del[node][del_node].b == currentChild){
+					Nodes[child] = 0;
+					break;
+				}
+		}
+
+		// Remove additions that were deleted
+		for(unsigned int add_node=0; add_node < Backward_add[node].size(); add_node++){
+			Node current_add = Backward_add[node][add_node].b;
+			int add_version = Backward_add[node][add_node].version;
+
+			for(unsigned int del_node=0; del_node < Backward_del[node].size(); del_node++)
+				if(Backward_del[node][del_node].b == current_add && Backward_del[node][del_node].version > add_version){
+					Backward_add[node].erase(  Backward_add[node].begin()+add_node );
+					add_node--;
+					break;
+				}
+		}
+
+		// Add additions to the graph if there is empty space
+		bool allAdded = false;
+		for(unsigned int add_node=0; add_node < Backward_add[node].size(); add_node++){
+			Node current_add = Backward_add[node][add_node].b;
+			allAdded = false;
+
+			for(unsigned int child=FastBackwardG[node].start; child < end; child++){
+				if(Nodes[child] == 0){
+					allAdded = true;
+					Nodes[child] = current_add;
+					break;
+				}
+			}
+
+			// If we get here, there are no more empty nodes to insert an element
+			if(allAdded == false)
+				break;
+		}
+
+		FastBackwardG[node].deletion = false;
+		if(allAdded)
+			FastBackwardG[node].addition = false;
+	}
+}
 
 int main() {
 	ios_base::sync_with_stdio(false);
@@ -974,9 +1286,9 @@ int main() {
 	char c;
 	int resultsCounter = 0;
 
-	//For debugging
+	// For profiling
 	//ifstream input;
-	//input.open("/home/thanasis/Desktop/test-harness/input.txt");
+	//input.open("/home/thanasis/Desktop/test-harness/inputDenser.txt");
 	//ofstream output;
 	//output.open("/home/thanasis/Desktop/test-harness/output.txt");
 
@@ -1006,17 +1318,24 @@ int main() {
 			bQueue_global[i][j] = (Node*)calloc(MAXN, sizeof(Node));
 		}
 
-	unsigned int counter = 0;			// For profiling
+	unsigned int counter = 0;
 	while(cin >> a >> b){
 		if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 		if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 		add_edge_final(nameChange[a],nameChange[b]);
-		//if(counter == 3232855){		// For profiling
+		//if(counter == 30622564){		// Input normal: 3232855, Input Denser: 30622564,	for profiling
 		//	break;
 		//}
 		counter++;
 	}
-	unsigned int initialNameCounter = nameChangeCounter;
+	initialNodes = nameChangeCounter;
+
+	for(unsigned int i=0; i<initialNodes+100; i++){
+		Forward_del[i].reserve(15);
+		Forward_add[i].reserve(15);
+		Backward_del[i].reserve(15);
+		Backward_add[i].reserve(15);
+	}
 
 	Nodes.reserve(counter*2);
 
@@ -1028,14 +1347,14 @@ int main() {
 
 
 	unsigned int maxNeighbors = getMaxNeighbor();
-	//unsigned int averageNeighbors = (unsigned int)(counter)/nameChangeCounter;
+	double averageNeighbors = (counter)/nameChangeCounter;
 
 	bool star = false;
-	if((nameChangeCounter/1000)*maxNeighbors > counter)
-		star = true;
+	if(averageNeighbors*STARFACTOR<maxNeighbors)
+		star=true;
+
 
 	if(star){
-
 		// Create the new Graph
 		StarForwardG = (StarGNode*)calloc(MAXN, sizeof(StarGNode));
 		StarBackwardG = (StarGNode*)calloc(MAXN, sizeof(StarGNode));
@@ -1050,6 +1369,7 @@ int main() {
 		}
 		StarForwardG[nameChangeCounter].start = nodes_ptr;
 
+		StarBackwardG[0].start = nodes_ptr;
 		for(unsigned int cur_n=1; cur_n<nameChangeCounter; cur_n++){
 			unsigned int size = BackwardGraph[cur_n].nodes.size();
 			StarBackwardG[cur_n].start = nodes_ptr;
@@ -1062,118 +1382,159 @@ int main() {
 		preprocess4();
 		preprocess5();
 
-		free(ForwardGraph);
-		free(BackwardGraph);
+		// free(ForwardGraph);
+		// free(BackwardGraph);
 
 		// Creating Threads
-		threadpool11::Pool query_pool;
 		query_pool.setWorkerCount(NUMOFTHREADS-1);
-
+		initThread();
 		for(int i=0; i<NUMOFTHREADS-1; i++)
 			query_pool.postWork<void>(initThread);
-		initThread();
 		query_pool.waitAll();
 
-		// Main Thread Queue
 		vector<SP_Params> main_queue;
 		main_queue.reserve(20000);
 
 		vector<SP_Params> thread_queue;
 		thread_queue.reserve(20000);
 
-
 		SP_Params params;
+
+		unsigned int totalDeletes = 0;
 
 		cout << "R" << endl << flush;
 
-		//cerr << "Starting Queries!" << endl;
-
-		sleep(2);
 
 		cin.clear();
 		cin >> c;
 
-		while(cin >> c) {
-			if(c == 'F') {
-				//cerr << "Starting Flush!" << endl;
+		if(averageNeighbors*2*STARFACTOR<maxNeighbors){		// StarGraph with short queries run by single thread
+			while(cin >> c) {
+				if(c == 'F') {
+					// Maybe merge the graph
+					if(nameChangeCounter/MERGEFACTOR < totalDeletes){
+						totalDeletes = 0;
+						merge_stargraph();
+					}
 
-				// Give the queries to the threads
-				for(vector<SP_Params>::iterator it=thread_queue.begin(); it!=thread_queue.end(); it++)
-					query_pool.postWork<void>([it] {  shortest_path_star(it->a, it->b, it->versionCounter, it->resultsCounter);  });
-				thread_queue.clear();
+					// Give the queries to the threads
+					sort(thread_queue.begin(),thread_queue.end(),Mycomparison());
+					for(vector<SP_Params>::iterator it=thread_queue.begin(); it!=thread_queue.end(); it++)
+						query_pool.postWork<void>([it] {  shortest_path_star(it->a, it->b, it->versionCounter, it->resultsCounter);  });
 
-				// Run your shortest paths
-				for(vector<SP_Params>::iterator it=main_queue.begin(); it!=main_queue.end(); it++)
-					shortest_path_star(it->a, it->b, it->versionCounter, it->resultsCounter);
-				main_queue.clear();
+					// Run your shortest paths
+					sort(main_queue.begin(),main_queue.end(),Mycomparison());
+					for(vector<SP_Params>::iterator it=main_queue.begin(); it!=main_queue.end(); it++)
+						shortest_path_star(it->a, it->b, it->versionCounter, it->resultsCounter);
 
-				query_pool.waitAll();
-				// Print the results
-				for(int i=0; i<resultsCounter; i++)
-					cout << results[i] << endl;
+					thread_queue.clear();
+	 				main_queue.clear();
+					query_pool.waitAll();
+					// Print the results
+					for(int i=0; i<resultsCounter; i++)
+						cout << results[i] << endl;
 
-				cout << flush;
-				cin.clear();
+					cout << flush;
+					cin.clear();
 
-				resultsCounter = 0;
+					resultsCounter = 0;
 
-				//cerr << "End of Flush!" << endl;
+					continue;
+				}
 
-				continue;
-			}
+				cin >> a >> b;
 
-			cin >> a >> b;
+				if(c == 'Q'){
+					if((nameChange[a]<initialNodes && evaluationF[nameChange[a]] && !StarForwardG[nameChange[a]].addition)
+						|| (nameChange[b]<initialNodes && evaluationB[nameChange[b]] && !StarBackwardG[nameChange[b]].addition)){
+						params.a = a;
+						params.b = b;
+						params.versionCounter = versionCounter;
+						params.resultsCounter = resultsCounter;
+						main_queue.push_back(params);
+					}else{
+						params.a = a;
+						params.b = b;
+						params.versionCounter = versionCounter;
+						params.resultsCounter = resultsCounter;
+						thread_queue.push_back(params);
+					}
 
-			if(c == 'Q'){
+					versionCounter++;
+					resultsCounter++;
 
-				//cerr << "Query!" << endl;
+				}else if(c == 'A'){
+					if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
+					if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 
-				if((nameChange[a]<initialNameCounter && evaluationF[nameChange[a]] && !StarForwardG[nameChange[a]].addition)
-					|| (nameChange[b]<initialNameCounter && evaluationB[nameChange[b]] && !StarBackwardG[nameChange[b]].addition)){
-					params.a = a;
-					params.b = b;
-					params.versionCounter = versionCounter;
-					params.resultsCounter = resultsCounter;
-					main_queue.push_back(params);
-					//shortest_path(a, b, versionCounter, resultsCounter);
+					add_edge_star(nameChange[a], nameChange[b], versionCounter);
+
+					versionCounter++;
+
 				}else{
+					totalDeletes++;
+					if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
+					if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
+
+					delete_edge_star(nameChange[a], nameChange[b], versionCounter);
+
+					versionCounter++;
+				}
+			}
+		}else{					// StarGraph without short queries run by single thread
+			while(cin >> c){
+				if(c == 'F') {
+					// Give the queries to the threads
+					sort(thread_queue.begin(),thread_queue.end(),Mycomparison());
+					for(vector<SP_Params>::iterator it=thread_queue.begin(); it!=thread_queue.end(); it++)
+						query_pool.postWork<void>([it] {  shortest_path_star(it->a, it->b, it->versionCounter, it->resultsCounter);  });
+					thread_queue.clear();
+
+					query_pool.waitAll();
+					// Print the results
+					for(int i=0; i<resultsCounter; i++)
+						cout << results[i] << endl;
+
+					cout << flush;
+					cin.clear();
+
+					resultsCounter = 0;
+
+					continue;
+				}
+
+				cin >> a >> b;
+
+				if(c == 'Q'){
 					params.a = a;
 					params.b = b;
 					params.versionCounter = versionCounter;
 					params.resultsCounter = resultsCounter;
 					thread_queue.push_back(params);
+
+					versionCounter++;
+					resultsCounter++;
+
+				}else if(c == 'A'){
+					if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
+					if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
+
+					add_edge_star(nameChange[a], nameChange[b], versionCounter);
+
+					versionCounter++;
+
+				}else{
+					if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
+					if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
+
+					delete_edge_star(nameChange[a], nameChange[b], versionCounter);
+
+					versionCounter++;
 				}
-					//query_pool.postWork<void>([a, b, versionCounter, resultsCounter] {  shortest_path_star(a, b, versionCounter, resultsCounter);  });
-
-				versionCounter++;
-				resultsCounter++;
-
-			}else if(c == 'A'){
-
-				//cerr << "Addition!" << endl;
-
-				if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
-				if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-
-				add_edge_star(nameChange[a], nameChange[b], versionCounter);
-
-				versionCounter++;
-
-			}else{
-
-				//cerr << "Deletion!" << endl;
-
-				if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
-				if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
-
-				delete_edge_star(nameChange[a], nameChange[b], versionCounter);
-
-				versionCounter++;
 			}
 		}
-	}else{
+	}else{				// FastGraph without children for predictability
 		// Create the new Graph
-
 		FastForwardG = (FastGNode*)calloc(MAXN, sizeof(FastGNode));
 		FastBackwardG = (FastGNode*)calloc(MAXN, sizeof(FastGNode));
 
@@ -1197,23 +1558,22 @@ int main() {
 		preprocess4();
 		preprocess5();
 
-		free(ForwardGraph);
-		free(BackwardGraph);
+		// free(ForwardGraph);
+		// free(BackwardGraph);
 
 		// Creating Threads
-		threadpool11::Pool query_pool;
 		query_pool.setWorkerCount(NUMOFTHREADS-1);
 
+		initThread();
 		for(int i=0; i<NUMOFTHREADS-1; i++)
 			query_pool.postWork<void>(initThread);
-		initThread();
 		query_pool.waitAll();
 
 		// Main Thread Queue
-		vector<SP_Params> main_queue;
+		std::vector<SP_Params> main_queue;
 		main_queue.reserve(20000);
 
-		vector<SP_Params> thread_queue;
+		std::vector<SP_Params> thread_queue;
 		thread_queue.reserve(20000);
 
 
@@ -1221,26 +1581,16 @@ int main() {
 
 		cout << "R" << endl << flush;
 
-		//cerr << "Starting ... " << endl;
-
-		sleep(2);
-
 		cin.clear();
 		cin >> c;
 
 		while(cin >> c) {
 			if(c == 'F') {
-				//cerr << "Flushing ... " << endl;
-
 				// Give the queries to the threads
+				sort(thread_queue.begin(),thread_queue.end(),Mycomparison());
 				for(vector<SP_Params>::iterator it=thread_queue.begin(); it!=thread_queue.end(); it++)
 					query_pool.postWork<void>([it] {  shortest_path_fast(it->a, it->b, it->versionCounter, it->resultsCounter);  });
 				thread_queue.clear();
-
-				// Run your shortest paths
-				for(vector<SP_Params>::iterator it=main_queue.begin(); it!=main_queue.end(); it++)
-					shortest_path_fast(it->a, it->b, it->versionCounter, it->resultsCounter);
-				main_queue.clear();
 
 				query_pool.waitAll();
 				// Print the results
@@ -1258,31 +1608,16 @@ int main() {
 			cin >> a >> b;
 
 			if(c == 'Q'){
-				//cerr << "Query ... " << endl;
-
-				if((nameChange[a]<initialNameCounter && evaluationF[nameChange[a]] && !FastForwardG[nameChange[a]].addition)
-					|| (nameChange[b]<initialNameCounter && evaluationB[nameChange[b]] && !FastBackwardG[nameChange[b]].addition)){
-					params.a = a;
-					params.b = b;
-					params.versionCounter = versionCounter;
-					params.resultsCounter = resultsCounter;
-					main_queue.push_back(params);
-					//shortest_path_fast(a, b, versionCounter, resultsCounter);
-				}else{
-					params.a = a;
-					params.b = b;
-					params.versionCounter = versionCounter;
-					params.resultsCounter = resultsCounter;
-					thread_queue.push_back(params);
-				}
-					//query_pool.postWork<void>([a, b, versionCounter, resultsCounter] {  shortest_path_fast(a, b, versionCounter, resultsCounter);  });
+				params.a = a;
+				params.b = b;
+				params.versionCounter = versionCounter;
+				params.resultsCounter = resultsCounter;
+				thread_queue.push_back(params);
 
 				versionCounter++;
 				resultsCounter++;
 
 			}else if(c == 'A'){
-				//cerr << "add ... " << endl;
-
 				if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 				if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 
@@ -1291,9 +1626,6 @@ int main() {
 				versionCounter++;
 
 			}else{
-
-				//cerr << "deletion ... " << endl;
-
 				if(!nameChange[a]) nameChange[a] = nameChangeCounter++;
 				if(!nameChange[b]) nameChange[b] = nameChangeCounter++;
 
@@ -1306,4 +1638,3 @@ int main() {
 
 	return 0;
 }
-

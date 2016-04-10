@@ -1,2 +1,71 @@
-1. Team Name:
-	- TEST CASE
+Name: Athanasios-Michail Karampatsis
+E-mail: sdi1200054@di.uoa.gr
+Institution: National and Kapodistrian University of Athens (NKUA)
+Degree: Undergraduate student in Informatics and Telecom
+
+Name: Nikolaos Dimakopoulos
+E-mail: sdi1200032@di.uoa.gr
+Institution: National and Kapodistrian University of Athens (NKUA)
+Degree: Undergraduate student in Informatics and Telecom
+
+Name: Georgios Alexandropoulos
+E-mail: sdi1100013@di.uoa.gr
+Institution: National and Kapodistrian University of Athens (NKUA)
+Degree: Undergraduate student in Informatics and Telecom
+
+Name: Nikolaos Tzamos
+E-mail: sdi1100133@di.uoa.gr
+Institution: National and Kapodistrian University of Athens (NKUA)
+Degree: Undergraduate student in Informatics and Telecom
+ 
+Name: Yannis Foufoulas
+E-mail: i.foufoulas@di.uoa.gr
+Institution: National and Kapodistrian University of Athens (NKUA)
+Degree: PhD student in Computer Science
+PhD advisor: Yannis Ioannidis
+ 
+Third party libraries used:
+ 
+https://github.com/tghosgor/threadpool11 (LGPL v3.0)
+https://github.com/cameron314/concurrentqueue (Simplified BSD License)
+
+A brief explanation of the steps of the solution follows:
+
+1. Graph is stored in memory following the logic of an adjacency list but with several cache optimizations.
+2. Bidirectional BFS is used to calculate a single-source shortest path.
+3. 23 threads have been used to parallelize queries execution.
+4. Multiversioning techniques have been used to achieve parallel execution of the queries during updates.
+5. Inserts and deletes are not executed in parallel and they do not update directly the adjacency list but they 're kept in different data structures along with a version id.
+5. During the query execution, when a node opens, the insertions and deletions with the appropriate version id are taken into consideration. 
+
+There are also several optimization based on heuristics calculated in preproccessing phase so that bidirectional BFS is faster, and fastest queries (with short or no shortest path) run in the main thread after the exeution of the updates.
+Finally, several cache optimizations have been applied to reduce cache misses. 
+
+Team members contribution:
+
+Athanasios-Michail Karampatsis :
+Research, experiments, algorithmic issues, implementation of multithreading and multiversioning data structures,
+optimizations to bidirectional BFS and cache optimizations all over the code.
+
+Nikolaos Dimakopoulos :
+Research, implementation of preprocessing phases and multiversioning data structures, experiments with heuristics, optimize simple queries (with short or no shortest paths) , and other general optimizations.
+
+Georgios Alexandropoulos :
+Experiments with optimization ideas, indexing and preprocessing, calculate the connected components of the graphs to extract useful statistics.
+
+Nikolaos Tzamos :
+Initial implementation of bidirectional BFS algorithm, dataset statistics extraction and experiments.
+
+Yannis Foufoulas :
+Team management, research, advising over algorithmic issues, evaluation.
+
+
+The team members want to thank the following persons for their fruitful discussions during the development of the algorithm:
+
+Lefteris Stamatogiannakis (NKUA, Madgik Lab)
+Tasos Giannakopoulos (NKUA, Madgik Lab)
+Manos Karvounis (NKUA, Madgik Lab)
+Alexandros Papadopoulos (NKUA, Madgik Lab)
+
+The team members would like to thank professor Yannis Ioannidis (NKUA, Madgik Lab, Athena RC) for motivating them.
+
