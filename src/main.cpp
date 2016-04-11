@@ -1107,11 +1107,16 @@ void merge_stargraph(){
 			// If we get here, there are no more empty nodes to insert an element
 			if(allAdded == false)
 				break;
+			else
+				Forward_add[node].erase(  Forward_add[node].begin()+add_node );
 		}
 
 		StarForwardG[node].deletion = false;
-		if(allAdded)
+		Forward_del[node].clear();
+		if(allAdded){
 			StarForwardG[node].addition = false;
+			Forward_add[node].clear();
+		}
 	}
 
 
@@ -1162,11 +1167,16 @@ void merge_stargraph(){
 			// If we get here, there are no more empty nodes to insert an element
 			if(allAdded == false)
 				break;
+			else
+				Backward_add[node].erase(  Backward_add[node].begin()+add_node );
 		}
 
 		StarBackwardG[node].deletion = false;
-		if(allAdded)
+		Backward_del[node].clear();
+		if(allAdded){
 			StarBackwardG[node].addition = false;
+			Backward_add[node].clear();
+		}
 	}
 }
 
@@ -1216,11 +1226,16 @@ void merge_fastgraph(){
 			// If we get here, there are no more empty nodes to insert an element
 			if(allAdded == false)
 				break;
+			else
+				Forward_add[node].erase(  Forward_add[node].begin()+add_node );
 		}
 
 		FastForwardG[node].deletion = false;
-		if(allAdded)
+		Forward_del[node].clear();
+		if(allAdded){
 			FastForwardG[node].addition = false;
+			Forward_add[node].clear();
+		}
 	}
 
 
@@ -1269,11 +1284,16 @@ void merge_fastgraph(){
 			// If we get here, there are no more empty nodes to insert an element
 			if(allAdded == false)
 				break;
+			else
+				Backward_add[node].erase(  Backward_add[node].begin()+add_node );
 		}
 
 		FastBackwardG[node].deletion = false;
-		if(allAdded)
+		Backward_del[node].clear();
+		if(allAdded){
 			FastBackwardG[node].addition = false;
+			Backward_add[node].clear();
+		}
 	}
 }
 
